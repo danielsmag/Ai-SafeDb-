@@ -13,12 +13,14 @@ from pydantic import ValidationError
 from app.exceptions import ConfigError, DuplicateServerError, MissingEnvVarError
 from app.models import McpServerConfig
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
-_YAML_SUFFIXES = (".yaml", ".yml")
+_YAML_SUFFIXES: tuple[str, str] = (".yaml", ".yml")
 
 # ${VAR} or ${VAR:-fallback}
-_ENV_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_ENV_PLACEHOLDER: re.Pattern[str] = re.compile(
+    r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}"
+)
 
 
 class ConfigLoader:
@@ -33,8 +35,10 @@ class ConfigLoader:
         config_dir: Path,
         environ: Mapping[str, str] | None = None,
     ) -> None:
-        self._config_dir = config_dir
-        self._environ = environ if environ is not None else os.environ
+        self._config_dir: Path = config_dir
+        self._environ: Mapping[str, str] = (
+            environ if environ is not None else os.environ
+        )
 
     @property
     def config_dir(self) -> Path:
@@ -53,15 +57,16 @@ class ConfigLoader:
         seen: dict[str, Path] = {}
         configs: list[McpServerConfig] = []
         for path in self._iter_config_files():
-            document = self._read_document(path)
+            document: dict[str, Any] = self._read_document(path)
             # Checked before validation and `${VAR}` expansion so that disabled
             # files can stay in the folder as templates with unset secrets.
             if not document.get("enabled", True):
                 logger.info("Skipping disabled server definition %s", path.name)
                 continue
 
-            config = self._build_config(path, document)
-            if (first := seen.get(config.name)) is not None:
+            config: McpServerConfig = self._build_config(path, document)
+            first: Path | None = seen.get(config.name)
+            if first is not None:
                 raise DuplicateServerError(config.name, first, path)
             seen[config.name] = path
             configs.append(config)
@@ -69,7 +74,7 @@ class ConfigLoader:
         return sorted(configs, key=lambda config: config.name)
 
     def _iter_config_files(self) -> list[Path]:
-        files = [
+        files: list[Path] = [
             path
             for path in self._config_dir.iterdir()
             if path.is_file()
@@ -80,12 +85,12 @@ class ConfigLoader:
 
     def _read_document(self, path: Path) -> dict[str, Any]:
         try:
-            raw = path.read_text(encoding="utf-8")
+            raw: str = path.read_text(encoding="utf-8")
         except OSError as err:
             raise ConfigError(path, f"cannot read file: {err}") from err
 
         try:
-            document = yaml.safe_load(raw)
+            document: Any = yaml.safe_load(raw)
         except yaml.YAMLError as err:
             raise ConfigError(path, f"invalid YAML: {err}") from err
 
@@ -97,7 +102,7 @@ class ConfigLoader:
 
     def _build_config(self, path: Path, document: dict[str, Any]) -> McpServerConfig:
         document.setdefault("name", path.stem)
-        resolved = self._expand(document, path)
+        resolved: Any = self._expand(document, path)
 
         try:
             return McpServerConfig.model_validate(resolved)
@@ -115,8 +120,9 @@ class ConfigLoader:
 
     def _expand_str(self, value: str, path: Path) -> str:
         def replace(match: re.Match[str]) -> str:
-            var_name, fallback = match.group(1), match.group(2)
-            resolved = self._environ.get(var_name)
+            var_name: str = match.group(1)
+            fallback: str | None = match.group(2)
+            resolved: str | None = self._environ.get(var_name)
             if resolved is not None:
                 return resolved
             if fallback is not None:

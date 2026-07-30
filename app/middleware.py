@@ -10,7 +10,7 @@ from mcp import types as mt
 from app.exceptions import ToolBlockedError
 from app.models import ToolPolicy
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ToolPolicyMiddleware(Middleware):
@@ -21,17 +21,19 @@ class ToolPolicyMiddleware(Middleware):
     """
 
     def __init__(self, policy: ToolPolicy, server_name: str) -> None:
-        self._policy = policy
-        self._server_name = server_name
+        self._policy: ToolPolicy = policy
+        self._server_name: str = server_name
 
     async def on_list_tools(
         self,
         context: MiddlewareContext[mt.ListToolsRequest],
         call_next: CallNext[mt.ListToolsRequest, Sequence[Tool]],
     ) -> Sequence[Tool]:
-        tools = await call_next(context)
-        permitted = [tool for tool in tools if self._policy.permits(tool.name)]
-        hidden = len(tools) - len(permitted)
+        tools: Sequence[Tool] = await call_next(context)
+        permitted: list[Tool] = [
+            tool for tool in tools if self._policy.permits(tool.name)
+        ]
+        hidden: int = len(tools) - len(permitted)
         if hidden:
             logger.debug(
                 "Tool policy hid %d/%d tools for server %r",
@@ -46,7 +48,7 @@ class ToolPolicyMiddleware(Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, ToolResult],
     ) -> ToolResult:
-        tool_name = context.message.name
+        tool_name: str = context.message.name
         if not self._policy.permits(tool_name):
             logger.warning(
                 "Blocked call to tool %r on server %r",

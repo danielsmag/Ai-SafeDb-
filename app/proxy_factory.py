@@ -18,7 +18,7 @@ from app.exceptions import ProxyBuildError
 from app.middleware import ToolPolicyMiddleware
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ProxyFactory:
@@ -29,10 +29,12 @@ class ProxyFactory:
     """
 
     def __init__(self, environ: Mapping[str, str] | None = None) -> None:
-        self._environ = environ if environ is not None else os.environ
+        self._environ: Mapping[str, str] = (
+            environ if environ is not None else os.environ
+        )
 
     def create(self, config: McpServerConfig) -> FastMCP:
-        transport = self._build_transport(config)
+        transport: ClientTransport = self._build_transport(config)
         logger.info(
             "Proxying server %r via %s",
             config.name,
@@ -56,12 +58,12 @@ class ProxyFactory:
         )
 
     def _build_http_transport(self, source: HttpSource) -> ClientTransport:
-        timeout = (
+        timeout: timedelta | None = (
             timedelta(seconds=source.read_timeout_seconds)
             if source.read_timeout_seconds is not None
             else None
         )
-        transport_cls = (
+        transport_cls: type[SSETransport] | type[StreamableHttpTransport] = (
             SSETransport if source.transport == "sse" else StreamableHttpTransport
         )
         return transport_cls(
@@ -73,7 +75,9 @@ class ProxyFactory:
     def _build_stdio_transport(self, source: StdioSource) -> ClientTransport:
         # The child process inherits the gateway environment so that PATH and
         # friends keep working; explicit entries win.
-        env = {**self._environ, **source.env} if source.env else None
+        env: dict[str, str] | None = (
+            {**self._environ, **source.env} if source.env else None
+        )
         return StdioTransport(
             command=source.command,
             args=source.args,

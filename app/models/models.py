@@ -1,17 +1,17 @@
 """Schema of the YAML files that describe source MCP servers."""
 
 from fnmatch import fnmatch
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Final, Literal
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
-SERVER_NAME_PATTERN = r"^[a-z0-9][a-z0-9._-]*$"
+SERVER_NAME_PATTERN: Final[str] = r"^[a-z0-9][a-z0-9._-]*$"
 
 
 class HttpSource(BaseModel):
     """A source MCP server reachable over HTTP."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     transport: Literal["http", "sse"] = "http"
     url: AnyHttpUrl
@@ -22,7 +22,7 @@ class HttpSource(BaseModel):
 class StdioSource(BaseModel):
     """A source MCP server the gateway launches as a child process."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     transport: Literal["stdio"]
     command: str = Field(min_length=1)
@@ -31,7 +31,10 @@ class StdioSource(BaseModel):
     cwd: str | None = None
 
 
-McpSource = Annotated[HttpSource | StdioSource, Field(discriminator="transport")]
+type McpSource = Annotated[
+    HttpSource | StdioSource,
+    Field(discriminator="transport"),
+]
 
 
 class ToolPolicy(BaseModel):
@@ -41,7 +44,7 @@ class ToolPolicy(BaseModel):
     every tool is allowed; `block` always wins over `allow`.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     allow: list[str] = Field(default_factory=list)
     block: list[str] = Field(default_factory=list)
@@ -57,7 +60,7 @@ class ToolPolicy(BaseModel):
 class McpServerConfig(BaseModel):
     """One YAML file: a source MCP server plus the policy applied to it."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
     name: str = Field(pattern=SERVER_NAME_PATTERN, max_length=64)
     enabled: bool = True

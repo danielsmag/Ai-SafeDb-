@@ -118,13 +118,16 @@ docker run -i --rm --add-host=host.docker.internal:host-gateway \
 
 | Path | Role |
 | --- | --- |
-| [app/main.py](app/main.py) | Composition root: loads configs, mounts one MCP app per server, `/health` and `/servers` |
+| [app/main.py](app/main.py) | Thin Uvicorn application-factory entry point |
+| [app/core/bootstrap.py](app/core/bootstrap.py) | Startup sequence for logging, dependency wiring, and app assembly |
+| [app/core/container.py](app/core/container.py) | Dependency-injector providers and dependency lifetimes |
+| [app/core/config.py](app/core/config.py) | Validated, environment-driven Pydantic settings |
+| [app/services/gateway_application.py](app/services/gateway_application.py) | Loads configs, mounts MCP apps, and registers gateway routes |
 | [app/models.py](app/models.py) | YAML schema (`McpServerConfig`, `HttpSource`, `StdioSource`, `ToolPolicy`) |
 | [app/config_loader.py](app/config_loader.py) | Folder scan, validation, `${VAR}` expansion |
 | [app/proxy_factory.py](app/proxy_factory.py) | Builds a FastMCP proxy + transport per definition |
 | [app/middleware.py](app/middleware.py) | Tool policy enforcement |
-| [app/settings.py](app/settings.py) | Environment-driven settings |
-| [app/exceptions.py](app/exceptions.py) | Error hierarchy |
+| [app/exceptions/](app/exceptions/) | Gateway error hierarchy |
 
 ## Tests
 

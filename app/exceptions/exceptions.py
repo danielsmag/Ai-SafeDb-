@@ -13,7 +13,7 @@ class ConfigError(GatewayError):
     """A server definition file is missing, unreadable, or invalid."""
 
     def __init__(self, path: Path, message: str) -> None:
-        self.path = path
+        self.path: Path = path
         super().__init__(f"{path}: {message}")
 
 
@@ -21,7 +21,7 @@ class MissingEnvVarError(ConfigError):
     """A `${VAR}` placeholder in a server definition has no value."""
 
     def __init__(self, path: Path, var_name: str) -> None:
-        self.var_name = var_name
+        self.var_name: str = var_name
         super().__init__(path, f"environment variable {var_name!r} is not set")
 
 
@@ -29,9 +29,9 @@ class DuplicateServerError(GatewayError):
     """Two server definitions claim the same name."""
 
     def __init__(self, name: str, first: Path, second: Path) -> None:
-        self.name = name
-        self.first = first
-        self.second = second
+        self.name: str = name
+        self.first: Path = first
+        self.second: Path = second
         super().__init__(f"duplicate server name {name!r} in {first} and {second}")
 
 
@@ -39,7 +39,7 @@ class ProxyBuildError(GatewayError):
     """A proxy could not be constructed for a server definition."""
 
     def __init__(self, server_name: str, message: str) -> None:
-        self.server_name = server_name
+        self.server_name: str = server_name
         super().__init__(f"{server_name}: {message}")
 
 
@@ -51,8 +51,8 @@ class ToolBlockedError(GatewayError, ToolError):
     """
 
     def __init__(self, server_name: str, tool_name: str) -> None:
-        self.server_name = server_name
-        self.tool_name = tool_name
+        self.server_name: str = server_name
+        self.tool_name: str = tool_name
         super().__init__(
             f"tool {tool_name!r} is not exposed by gateway server {server_name!r}"
         )

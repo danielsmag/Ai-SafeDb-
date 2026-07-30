@@ -1,0 +1,22 @@
+---
+description: 
+alwaysApply: true
+---
+
+# Explicit Python Typing
+
+- Annotate every function parameter and return type.
+- Annotate every newly declared local variable, even when its type is inferable.
+- Annotate instance attributes, class attributes, module variables, constants,
+  loggers, exports, and dependency-injector providers.
+- Use concrete types instead of `Any` whenever the value has a known contract.
+- Do not repeat an annotation when reassigning an already annotated variable.
+- Loop targets, comprehension targets, exception targets, and context-manager
+  targets do not require inline annotations.
+- Avoid assignment expressions (`:=`) when they prevent an explicit declaration.
+
+```python
+settings: AppSettings = AppSettings()
+api: FastAPI = FastAPI()
+self._settings: AppSettings = settings
+```
