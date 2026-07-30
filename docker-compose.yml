@@ -1,0 +1,66 @@
+services:
+  gateway:
+    build: .
+    container_name: aisafedb-mcp-gateway
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GATEWAY_CONFIG_DIR: /app/mcp-servers
+      GATEWAY_PUBLIC_BASE_URL: ${GATEWAY_PUBLIC_BASE_URL:-http://localhost:8000}
+      GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      POSTGRES_MCP_URL: postgresql://${POSTGRES_USER:-aisafe}:${POSTGRES_PASSWORD:-aisafe}@postgres:5432/${POSTGRES_DB:-aisafedb}
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    volumes:
+      - ./mcp-servers:/app/mcp-servers:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres-mcp:
+    image: mcp/postgres
+    build:
+      context: ./docker/postgres-mcp
+    profiles:
+      - tools
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: aisafedb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aisafe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aisafe}
+      POSTGRES_DB: ${POSTGRES_DB:-aisafedb}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aisafe} -d ${POSTGRES_DB:-aisafedb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: aisafedb-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  pgadmin_data:

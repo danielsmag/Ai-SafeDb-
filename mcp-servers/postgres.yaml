@@ -1,0 +1,21 @@
+# Official read-only Postgres MCP (@modelcontextprotocol/server-postgres) for the
+# aisafedb database running in Docker.
+# Exposed at http://localhost:8000/mcp/postgres
+#
+# When the gateway runs in Docker Compose, POSTGRES_MCP_URL uses the postgres
+# service hostname. When running locally (uv run), it defaults to localhost:5432.
+name: postgres
+enabled: true
+description: Read-only schema inspection and SQL queries against the aisafedb PostgreSQL database.
+
+source:
+  transport: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-postgres"
+    - ${POSTGRES_MCP_URL:-postgresql://aisafe:aisafe@localhost:5432/aisafedb}
+
+tools:
+  allow: []
+  block: []

@@ -1,0 +1,20 @@
+# Example: a source MCP server the gateway launches as a child process (stdio).
+# Exposed at http://localhost:8000/mcp/github once enabled.
+name: github
+enabled: false
+description: GitHub tools, without repository-destroying operations.
+
+source:
+  transport: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-github"
+  env:
+    GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_TOKEN}
+
+tools:
+  allow: []            # empty = every tool the source server offers
+  block:
+    - delete_*
+    - create_or_update_file

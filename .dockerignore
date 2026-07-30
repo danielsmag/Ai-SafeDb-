@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+tests
+init
+mcp-servers
+docker-compose.yml
+requirements.txt
+requirements-dev.txt
