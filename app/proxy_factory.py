@@ -1,6 +1,5 @@
 """Construction of a FastMCP proxy for each source MCP server."""
 
-import logging
 import os
 from collections.abc import Mapping
 from datetime import timedelta
@@ -14,11 +13,10 @@ from fastmcp.client.transports import (
 )
 from fastmcp.server import create_proxy
 
+from app.core.logging import logger
 from app.exceptions import ProxyBuildError
 from app.middleware import ToolPolicyMiddleware
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ProxyFactory:

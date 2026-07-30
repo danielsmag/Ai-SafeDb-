@@ -1,7 +1,5 @@
 """FastAPI application assembly for the MCP gateway."""
 
-import logging
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
@@ -11,13 +9,12 @@ from starlette.types import Lifespan
 
 from app import __version__
 from app.core.config import AppSettings
+from app.core.logging import logger
 from app.exceptions import GatewayError
 from app.models import McpServerConfig
 from app.proxy_factory import ProxyFactory
 from app.schemas import HealthResponse, ServerListResponse, ServerSummary
 from app.services.config_loader import ConfigLoader
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 
 class GatewayApplication:

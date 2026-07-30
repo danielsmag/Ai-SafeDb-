@@ -4,7 +4,7 @@ from fastapi import FastAPI
 
 from app.core.bootstrap import bootstrap_application
 from app.core.config import AppSettings
-from app.services.gateway_application import GatewayApplication
+from app.domain.gateway_application import GatewayApplication
 
 __all__: list[str] = ["GatewayApplication", "create_app"]
 

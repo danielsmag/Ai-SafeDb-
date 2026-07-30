@@ -1,14 +1,10 @@
 """Application bootstrap sequence and composition root."""
 
-import logging
-from typing import Final
-
 from fastapi.applications import FastAPI
 
 from app.core.config import AppSettings
 from app.core.container import ApplicationContainer
-
-_LOG_FORMAT: Final[str] = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+from app.core.logging import configure_logging
 
 
 class ApplicationBootstrap:
@@ -28,10 +24,7 @@ class ApplicationBootstrap:
         return api
 
     def _configure_logging(self) -> None:
-        logging.basicConfig(
-            level=self._settings.log_level,
-            format=_LOG_FORMAT,
-        )
+        configure_logging(self._settings.log_level)
 
 
 def bootstrap_application(settings: AppSettings | None = None) -> FastAPI:

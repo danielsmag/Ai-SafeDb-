@@ -3,9 +3,9 @@
 from dependency_injector import containers, providers
 
 from app.core.config import AppSettings
+from app.domain.gateway_application import GatewayApplication
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
-from app.services.gateway_application import GatewayApplication
 
 
 class ApplicationContainer(containers.DeclarativeContainer):

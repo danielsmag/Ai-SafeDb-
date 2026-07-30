@@ -1,16 +1,14 @@
 """FastMCP middleware that enforces the per-server tool policy."""
 
-import logging
 from collections.abc import Sequence
 
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
 
+from app.core.logging import logger
 from app.exceptions import ToolBlockedError
 from app.models import ToolPolicy
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ToolPolicyMiddleware(Middleware):

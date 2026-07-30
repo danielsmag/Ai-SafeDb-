@@ -1,6 +1,5 @@
 """Loading of source MCP server definitions from a dedicated folder."""
 
-import logging
 import os
 import re
 from collections.abc import Mapping
@@ -10,10 +9,9 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from app.core.logging import logger
 from app.exceptions import ConfigError, DuplicateServerError, MissingEnvVarError
 from app.models import McpServerConfig
-
-logger: logging.Logger = logging.getLogger(__name__)
 
 _YAML_SUFFIXES: tuple[str, str] = (".yaml", ".yml")
 
