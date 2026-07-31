@@ -1,6 +1,8 @@
 services:
   gateway:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
     container_name: aisafedb-mcp-gateway
     restart: unless-stopped
     env_file:
@@ -10,11 +12,15 @@ services:
       GATEWAY_CONFIG_DIR: /app/mcp-servers
       GATEWAY_PUBLIC_BASE_URL: ${GATEWAY_PUBLIC_BASE_URL:-http://localhost:8000}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      GATEWAY_LLM__BASE_URL: ${GATEWAY_LLM__BASE_URL:-http://host.docker.internal:11434/v1}
+      GATEWAY_GUARD__ENABLED: ${GATEWAY_GUARD__ENABLED:-false}
       POSTGRES_MCP_URL: postgresql://${POSTGRES_USER:-aisafe}:${POSTGRES_PASSWORD:-aisafe}@postgres:5432/${POSTGRES_DB:-aisafedb}
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     volumes:
       - ./mcp-servers:/app/mcp-servers:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -25,6 +31,23 @@ services:
       context: ./docker/postgres-mcp
     profiles:
       - tools
+
+  # Linux/NVIDIA only. On macOS, run `ollama serve` on the host for Metal.
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - llm
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   postgres:
     image: postgres:17-alpine
@@ -64,3 +87,4 @@ services:
 volumes:
   postgres_data:
   pgadmin_data:
+  ollama_data:

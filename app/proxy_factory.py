@@ -12,11 +12,14 @@ from fastmcp.client.transports import (
     StreamableHttpTransport,
 )
 from fastmcp.server import create_proxy
+from fastmcp.server.middleware import Middleware
 
+from app.core.config import GuardSettings
 from app.core.logging import logger
 from app.exceptions import ProxyBuildError
-from app.middleware import ToolPolicyMiddleware
+from app.middleware import LlmGuardMiddleware, ToolPolicyMiddleware
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
+from app.services.guard import GuardService
 
 
 class ProxyFactory:
@@ -26,10 +29,17 @@ class ProxyFactory:
     the source server, with the tool policy applied in between.
     """
 
-    def __init__(self, environ: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        environ: Mapping[str, str] | None = None,
+        guard_service: GuardService | None = None,
+        guard_settings: GuardSettings | None = None,
+    ) -> None:
         self._environ: Mapping[str, str] = (
             environ if environ is not None else os.environ
         )
+        self._guard_service: GuardService | None = guard_service
+        self._guard_settings: GuardSettings = guard_settings or GuardSettings()
 
     def create(self, config: McpServerConfig) -> FastMCP:
         transport: ClientTransport = self._build_transport(config)
@@ -38,11 +48,37 @@ class ProxyFactory:
             config.name,
             type(transport).__name__,
         )
+        middleware: list[Middleware] = [
+            ToolPolicyMiddleware(config.tools, server_name=config.name)
+        ]
+        guard_enabled: bool = (
+            config.guard.enabled
+            if config.guard.enabled is not None
+            else self._guard_settings.enabled
+        )
+        if guard_enabled:
+            if self._guard_service is None:
+                raise ProxyBuildError(
+                    config.name,
+                    "safety guard enabled without a configured guard service",
+                )
+            inspect_results: bool = (
+                config.guard.inspect_results
+                if config.guard.inspect_results is not None
+                else self._guard_settings.inspect_results
+            )
+            middleware.append(
+                LlmGuardMiddleware(
+                    self._guard_service,
+                    server_name=config.name,
+                    inspect_results=inspect_results,
+                )
+            )
         return create_proxy(
             transport,
             name=config.name,
             instructions=config.description,
-            middleware=[ToolPolicyMiddleware(config.tools, server_name=config.name)],
+            middleware=middleware,
         )
 
     def _build_transport(self, config: McpServerConfig) -> ClientTransport:

@@ -57,6 +57,15 @@ class ToolPolicy(BaseModel):
         return any(fnmatch(tool_name, pattern) for pattern in self.allow)
 
 
+class GuardOverride(BaseModel):
+    """Optional per-server override of global guard behavior."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    inspect_results: bool | None = None
+
+
 class McpServerConfig(BaseModel):
     """One YAML file: a source MCP server plus the policy applied to it."""
 
@@ -67,6 +76,7 @@ class McpServerConfig(BaseModel):
     description: str | None = None
     source: McpSource
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
+    guard: GuardOverride = Field(default_factory=GuardOverride)
 
     def mount_path(self, mount_prefix: str) -> str:
         return f"{mount_prefix}/{self.name}"

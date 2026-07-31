@@ -16,6 +16,8 @@ Fields:
 | `source.url`, `source.headers`, `source.read_timeout_seconds` | http/sse only | Remote MCP server to call. |
 | `tools.allow` | no | Empty means all tools. Supports wildcards (`read_*`). |
 | `tools.block` | no | Always wins over `allow`. Supports wildcards. |
+| `guard.enabled` | no | Overrides global local-LLM guard enablement for this server. |
+| `guard.inspect_results` | no | Overrides global result inspection for this server. |
 
 Any string value may reference the environment as `${VAR}` or `${VAR:-fallback}`,
 so tokens stay out of these files. A `${VAR}` without a fallback that is unset

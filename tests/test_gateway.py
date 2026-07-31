@@ -16,7 +16,9 @@ from mcp import types as mt
 from app.main import GatewayApplication
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
+from app.services.guard import GuardService
 from app.settings import AppSettings
+from tests.fakes import FakeLlmClient
 
 SOURCE_SERVER: Final[Path] = Path(__file__).parent / "fixtures" / "source_server.py"
 BASE_URL: Final[str] = "http://gateway.test"
@@ -141,3 +143,41 @@ async def test_empty_config_dir_serves_only_gateway_routes(config_dir: Path) -> 
 
     assert health.json()["servers"] == 0
     assert missing.status_code == 404
+
+
+async def test_safety_guard_rejects_sensitive_tool_arguments(
+    config_dir: Path,
+    write_config: Callable[[str, str], Path],
+) -> None:
+    write_config(
+        "guarded.yaml",
+        f"""
+        name: guarded
+        source:
+          transport: stdio
+          command: ${{PYTHON_BIN}}
+          args: ["{SOURCE_SERVER}"]
+        guard:
+          enabled: true
+        """,
+    )
+    settings: AppSettings = AppSettings(config_dir=config_dir)
+    guard: GuardService = GuardService(
+        FakeLlmClient([]),
+        model="guard",
+        on_error="block",
+        cache_ttl_seconds=60,
+    )
+    gateway: GatewayApplication = GatewayApplication(
+        settings=settings,
+        loader=ConfigLoader(config_dir, environ={"PYTHON_BIN": sys.executable}),
+        proxy_factory=ProxyFactory(
+            guard_service=guard,
+            guard_settings=settings.guard,
+        ),
+    )
+    app: FastAPI = gateway.build()
+
+    async with running(app), mcp_client(app, "/mcp/guarded") as client:
+        with pytest.raises(ToolError, match="sensitive personal data"):
+            await client.call_tool("read_thing", {"name": "customer email"})
