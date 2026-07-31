@@ -2,7 +2,13 @@
 
 from collections import deque
 
-from app.llm import ChatCompletion, ChatMessage, JsonSchema, ToolDefinition
+from app.llm import (
+    ChatCompletion,
+    ChatMessage,
+    JsonSchema,
+    ReasoningEffort,
+    ToolDefinition,
+)
 
 
 class FakeLlmClient:
@@ -14,6 +20,7 @@ class FakeLlmClient:
         self.completions: deque[ChatCompletion] = deque(completions or [])
         self.error: Exception | None = error
         self.calls: list[list[ChatMessage]] = []
+        self.reasoning_efforts: list[ReasoningEffort | None] = []
         self.closed: bool = False
 
     async def complete(
@@ -23,8 +30,10 @@ class FakeLlmClient:
         model: str,
         schema: JsonSchema | None = None,
         tools: list[ToolDefinition] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> ChatCompletion:
         self.calls.append(messages)
+        self.reasoning_efforts.append(reasoning_effort)
         if self.error is not None:
             raise self.error
         return self.completions.popleft()

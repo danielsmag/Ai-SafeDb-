@@ -6,15 +6,45 @@ from typing import Any, ClassVar
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app.llm.models import ChatCompletion, ChatMessage
-from app.llm.protocols import JsonSchema, ToolDefinition
+from app.core.tracing import span
 from app.exceptions import LlmUnavailableError
+from app.llm.models import ChatCompletion, ChatMessage, ChatRole, ChatToolCall
+from app.llm.protocols import JsonSchema, ReasoningEffort, ToolDefinition
+
+
+class _ResponseMessage(BaseModel):
+    """Tolerant parse of a model's response message.
+
+    `ChatMessage` uses `extra="forbid"` to catch mistakes in messages *we*
+    build and send. Local "thinking" models (e.g. qwen3 via Ollama) add
+    extra fields such as `reasoning` to their response message, so parsing
+    the response needs a separate, lenient shape instead of reusing
+    `ChatMessage` and failing the whole chat completion over an ignorable
+    field.
+    """
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
+
+    role: ChatRole
+    content: str | None = None
+    name: str | None = None
+    tool_call_id: str | None = None
+    tool_calls: list[ChatToolCall] | None = None
+
+    def to_chat_message(self) -> ChatMessage:
+        return ChatMessage(
+            role=self.role,
+            content=self.content,
+            name=self.name,
+            tool_call_id=self.tool_call_id,
+            tool_calls=self.tool_calls,
+        )
 
 
 class _Choice(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="ignore")
 
-    message: ChatMessage
+    message: _ResponseMessage
     finish_reason: str | None = None
 
 
@@ -52,6 +82,7 @@ class OpenAICompatibleLlmClient:
         model: str,
         schema: JsonSchema | None = None,
         tools: list[ToolDefinition] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> ChatCompletion:
         payload: dict[str, object] = {
             "model": model,
@@ -66,6 +97,8 @@ class OpenAICompatibleLlmClient:
             }
         if tools is not None:
             payload["tools"] = tools
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
 
         async with self._semaphore:
             response: httpx.Response = await self._post_with_retry(payload)
@@ -78,7 +111,7 @@ class OpenAICompatibleLlmClient:
         except (ValueError, ValidationError, IndexError) as err:
             raise LlmUnavailableError("invalid chat-completion response") from err
         return ChatCompletion(
-            message=choice.message,
+            message=choice.message.to_chat_message(),
             finish_reason=choice.finish_reason,
         )
 
@@ -89,11 +122,16 @@ class OpenAICompatibleLlmClient:
     async def _post_with_retry(self, payload: dict[str, object]) -> httpx.Response:
         for attempt in range(2):
             try:
-                response: httpx.Response = await self._client.post(
-                    "/chat/completions",
-                    json=payload,
-                )
-                response.raise_for_status()
+                with span(
+                    "llm.http_post",
+                    model=payload.get("model"),
+                    attempt=attempt,
+                ):
+                    response: httpx.Response = await self._client.post(
+                        "/chat/completions",
+                        json=payload,
+                    )
+                    response.raise_for_status()
                 return response
             except (httpx.ConnectError, httpx.ConnectTimeout) as err:
                 if attempt == 1:

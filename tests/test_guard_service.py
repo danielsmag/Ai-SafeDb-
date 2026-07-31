@@ -1,10 +1,11 @@
 import json
+import logging
 
 import pytest
 
-from app.llm import ChatCompletion, ChatMessage
 from app.core.config import GuardErrorMode
 from app.exceptions import LlmUnavailableError
+from app.llm import ChatCompletion, ChatMessage
 from app.services.guard import GuardService
 from tests.fakes import FakeLlmClient
 
@@ -33,6 +34,30 @@ async def test_guard_uses_structured_model_verdict_and_cache() -> None:
 
     assert first.decision == second.decision == "allow"
     assert len(client.calls) == 1
+    assert client.reasoning_efforts == ["none"]
+
+
+async def test_guard_logs_full_question_and_answer_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client: FakeLlmClient = FakeLlmClient([completion()])
+    guard: GuardService = GuardService(
+        client,
+        "guard",
+        "block",
+        cache_ttl_seconds=60,
+    )
+    caplog.set_level(logging.DEBUG, logger="aisafedb")
+
+    await guard.review_call("source", "read", {"query": "SELECT 1 LIMIT 1"})
+
+    log_text: str = caplog.text
+    assert "Guard LLM question kind=call model=guard" in log_text
+    assert "SYSTEM:" in log_text
+    assert "USER:" in log_text
+    assert "SELECT 1 LIMIT 1" in log_text
+    assert "Guard LLM answer kind=call model=guard" in log_text
+    assert "scripted verdict" in log_text
 
 
 @pytest.mark.parametrize(

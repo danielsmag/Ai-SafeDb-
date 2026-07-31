@@ -7,7 +7,7 @@ from app.llm.models import (
     GuardVerdict,
 )
 from app.llm.openai_compatible import OpenAICompatibleLlmClient
-from app.llm.protocols import JsonSchema, LlmClient, ToolDefinition
+from app.llm.protocols import JsonSchema, LlmClient, ReasoningEffort, ToolDefinition
 
 __all__: list[str] = [
     "ChatCompletion",
@@ -19,5 +19,6 @@ __all__: list[str] = [
     "JsonSchema",
     "LlmClient",
     "OpenAICompatibleLlmClient",
+    "ReasoningEffort",
     "ToolDefinition",
 ]

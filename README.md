@@ -63,8 +63,8 @@ The policy is enforced in both directions: blocked tools are removed from
 
 The optional guard layers deterministic SQL/PII checks with a local model
 classification. It inspects both tool arguments and results, uses validated JSON
-verdicts, caches repeat decisions, redacts payloads from logs, and fails closed
-by default.
+verdicts, caches repeat decisions, redacts payloads at INFO level, and fails
+closed by default.
 
 On Apple Silicon, install and run Ollama on the host so it can use Metal. Docker
 Desktop cannot pass the Mac GPU into an Ollama container:
@@ -98,7 +98,30 @@ guard:
 
 The connector uses the OpenAI-compatible API rather than an Ollama-specific
 SDK. To use vLLM, llama.cpp, or LM Studio later, change
-`GATEWAY_LLM__BASE_URL`.
+`GATEWAY_LLM__BASE_URL`. Guard classifications send
+`reasoning_effort: "none"` to avoid thinking-token latency; red-team agent
+calls retain each model's default reasoning behavior.
+
+### Tracing tool calls
+
+Every tool call gets a short trace id (see [app/core/tracing.py](app/core/tracing.py))
+that's attached to every log line produced while handling it — the tool-policy
+check, the guard's call/result review, and the underlying LLM request. Log
+lines carry it as `[trace=<id>]`:
+
+```
+2026-07-31 14:50:01,123 INFO     aisafedb [trace=9f3a1c2b0e77]: tool_call start server='postgres' tool='query'
+2026-07-31 14:50:01,124 INFO     aisafedb [trace=9f3a1c2b0e77]: Tool call on server 'postgres': 'query' argument_keys=['sql']
+2026-07-31 14:50:01,210 INFO     aisafedb [trace=9f3a1c2b0e77]: Guard verdict kind=call model=guard decision=allow confidence=0.95 latency_ms=85.4
+2026-07-31 14:50:01,255 INFO     aisafedb [trace=9f3a1c2b0e77]: tool_call done latency_ms=132.1
+```
+
+Set `GATEWAY_LOG_LEVEL=DEBUG` to also see the nested spans (`guard.review_call`,
+`llm.complete`, `llm.http_post`, `tool.execute`, `guard.review_result`) with
+their own latencies and the full guard-model system prompt, user payload, and
+JSON answer. Debug logs can contain SQL, tool results, PII, or secrets; use them
+only in controlled development environments. This is log-based, not
+OpenTelemetry — there's no external tracing backend to run.
 
 ### Red-team agent
 

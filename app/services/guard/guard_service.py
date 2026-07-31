@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.core.config import GuardErrorMode
 from app.core.logging import logger
+from app.core.tracing import span
 from app.exceptions import LlmUnavailableError
 from app.llm import ChatCompletion, ChatMessage, GuardVerdict, LlmClient
 from app.services.guard.prefilter import (
@@ -83,18 +84,33 @@ class GuardService:
             return cached
 
         started_at: float = self._clock()
+        logger.debug(
+            "Guard LLM question kind=%s model=%s\nSYSTEM:\n%s\nUSER:\n%s",
+            kind,
+            self._model,
+            system_prompt,
+            subject,
+        )
         try:
-            completion: ChatCompletion = await self._client.complete(
-                [
-                    ChatMessage(role="system", content=system_prompt),
-                    ChatMessage(role="user", content=subject),
-                ],
-                model=self._model,
-                schema=_VERDICT_SCHEMA,
-            )
+            with span("llm.complete", kind=kind, model=self._model):
+                completion: ChatCompletion = await self._client.complete(
+                    [
+                        ChatMessage(role="system", content=system_prompt),
+                        ChatMessage(role="user", content=subject),
+                    ],
+                    model=self._model,
+                    schema=_VERDICT_SCHEMA,
+                    reasoning_effort="none",
+                )
             content: str | None = completion.message.content
             if content is None:
                 raise LlmUnavailableError("guard model returned no content")
+            logger.debug(
+                "Guard LLM answer kind=%s model=%s\n%s",
+                kind,
+                self._model,
+                content,
+            )
             verdict: GuardVerdict = GuardVerdict.model_validate_json(content)
         except (LlmUnavailableError, ValidationError, ValueError) as err:
             verdict = self._error_verdict(err)

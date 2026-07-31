@@ -41,12 +41,56 @@ async def test_openai_client_sends_schema_to_v1_endpoint() -> None:
         [ChatMessage(role="user", content="classify")],
         model="guard",
         schema={"type": "object"},
+        reasoning_effort="none",
     )
 
     assert completion.message.content == '{"ok":true}'
     assert str(requests[0].url) == "http://llm.test/v1/chat/completions"
     payload = json.loads(requests[0].content)
     assert payload["response_format"]["type"] == "json_schema"
+    assert payload["reasoning_effort"] == "none"
+    await http_client.aclose()
+
+
+async def test_openai_client_ignores_thinking_model_extra_fields() -> None:
+    """Ollama "thinking" models (e.g. qwen3) add a `reasoning` field to the
+    response message; it must be ignored rather than failing the whole
+    chat-completion parse."""
+    http_client = httpx.AsyncClient(
+        base_url="http://llm.test/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": '{"ok":true}',
+                                "reasoning": "internal chain of thought",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+    client = OpenAICompatibleLlmClient(
+        base_url="http://unused.test/v1",
+        api_key="test",
+        timeout_seconds=1,
+        max_concurrency=1,
+        keep_alive="10m",
+        client=http_client,
+    )
+
+    completion = await client.complete(
+        [ChatMessage(role="user", content="classify")],
+        model="qwen3:4b",
+    )
+
+    assert completion.message.content == '{"ok":true}'
     await http_client.aclose()
 
 

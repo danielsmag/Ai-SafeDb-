@@ -8,6 +8,7 @@ from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
 
 from app.core.logging import logger
+from app.core.tracing import span, trace
 from app.exceptions import ToolBlockedError, ToolGuardedError
 from app.llm import GuardVerdict
 from app.models import ToolPolicy
@@ -51,20 +52,21 @@ class ToolPolicyMiddleware(Middleware):
     ) -> ToolResult:
         tool_name: str = context.message.name
         arguments: dict[str, Any] | None = context.message.arguments
-        logger.info(
-            "Tool call on server %r: %r argument_keys=%s",
-            self._server_name,
-            tool_name,
-            sorted(arguments) if arguments else [],
-        )
-        if not self._policy.permits(tool_name):
-            logger.warning(
-                "Blocked call to tool %r on server %r",
-                tool_name,
+        with trace("tool_call", server=self._server_name, tool=tool_name):
+            logger.info(
+                "Tool call on server %r: %r argument_keys=%s",
                 self._server_name,
+                tool_name,
+                sorted(arguments) if arguments else [],
             )
-            raise ToolBlockedError(self._server_name, tool_name)
-        return await call_next(context)
+            if not self._policy.permits(tool_name):
+                logger.warning(
+                    "Blocked call to tool %r on server %r",
+                    tool_name,
+                    self._server_name,
+                )
+                raise ToolBlockedError(self._server_name, tool_name)
+            return await call_next(context)
 
 
 class LlmGuardMiddleware(Middleware):
@@ -87,11 +89,12 @@ class LlmGuardMiddleware(Middleware):
     ) -> ToolResult:
         tool_name: str = context.message.name
         arguments: dict[str, Any] | None = context.message.arguments
-        call_verdict: GuardVerdict = await self._guard.review_call(
-            self._server_name,
-            tool_name,
-            arguments,
-        )
+        with span("guard.review_call", server=self._server_name, tool=tool_name):
+            call_verdict: GuardVerdict = await self._guard.review_call(
+                self._server_name,
+                tool_name,
+                arguments,
+            )
         if call_verdict.decision == "block":
             raise ToolGuardedError(
                 self._server_name,
@@ -99,7 +102,8 @@ class LlmGuardMiddleware(Middleware):
                 call_verdict.reason,
             )
 
-        result: ToolResult = await call_next(context)
+        with span("tool.execute", server=self._server_name, tool=tool_name):
+            result: ToolResult = await call_next(context)
         if not self._inspect_results:
             return result
 
@@ -107,11 +111,12 @@ class LlmGuardMiddleware(Middleware):
             exclude={"meta"},
             fallback=lambda value: str(value),
         )
-        result_verdict: GuardVerdict = await self._guard.review_result(
-            self._server_name,
-            tool_name,
-            result_text,
-        )
+        with span("guard.review_result", server=self._server_name, tool=tool_name):
+            result_verdict: GuardVerdict = await self._guard.review_result(
+                self._server_name,
+                tool_name,
+                result_text,
+            )
         if result_verdict.decision == "block":
             raise ToolGuardedError(
                 self._server_name,
