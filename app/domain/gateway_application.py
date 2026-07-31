@@ -12,6 +12,7 @@ from app.core.config import AppSettings
 from app.core.logging import logger
 from app.exceptions import GatewayError
 from app.models import McpServerConfig
+from app.policies import Policy, PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.schemas import HealthResponse, ServerListResponse, ServerSummary
 from app.services.config_loader import ConfigLoader
@@ -25,14 +26,20 @@ class GatewayApplication:
         settings: AppSettings,
         loader: ConfigLoader,
         proxy_factory: ProxyFactory,
+        policy_loader: PolicyLoader | None = None,
     ) -> None:
         self._settings: AppSettings = settings
         self._loader: ConfigLoader = loader
         self._proxy_factory: ProxyFactory = proxy_factory
+        self._policy_loader: PolicyLoader | None = policy_loader
+        self._policies: dict[str, Policy] = {}
 
     def build(self) -> FastAPI:
         """Build and return the configured FastAPI application."""
         configs: list[McpServerConfig] = self._loader.load()
+        self._policies = (
+            self._policy_loader.load() if self._policy_loader is not None else {}
+        )
         logger.info(
             "Loaded %d MCP server definition(s) from %s",
             len(configs),
@@ -65,7 +72,14 @@ class GatewayApplication:
         return api
 
     def _build_mcp_app(self, config: McpServerConfig) -> StarletteWithLifespan:
-        proxy: FastMCP = self._proxy_factory.create(config)
+        policy: Policy | None = (
+            self._policies.get(config.policy) if config.policy is not None else None
+        )
+        if config.policy is not None and policy is None:
+            raise GatewayError(
+                f"server {config.name!r} references unknown policy {config.policy!r}"
+            )
+        proxy: FastMCP = self._proxy_factory.create(config, policy)
         return proxy.http_app(
             path="/",
             stateless_http=self._settings.stateless_http,

@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "AccessRules": {
+      "additionalProperties": false,
+      "description": "Allow lists for SQL database objects; empty lists allow all.",
+      "properties": {
+        "databases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Databases",
+          "type": "array"
+        },
+        "schemas": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Schemas",
+          "type": "array"
+        },
+        "tables": {
+          "items": {
+            "$ref": "#/$defs/TableRule"
+          },
+          "title": "Tables",
+          "type": "array"
+        }
+      },
+      "title": "AccessRules",
+      "type": "object"
+    },
+    "MaskAction": {
+      "enum": [
+        "mask",
+        "block",
+        "hash"
+      ],
+      "type": "string"
+    },
+    "PiiColumn": {
+      "additionalProperties": false,
+      "description": "Sensitivity rule for one result column.",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/MaskAction",
+          "default": "mask"
+        },
+        "column": {
+          "minLength": 1,
+          "title": "Column",
+          "type": "string"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "PiiColumn",
+      "type": "object"
+    },
+    "SqlDialect": {
+      "enum": [
+        "bigquery",
+        "clickhouse",
+        "databricks",
+        "duckdb",
+        "mysql",
+        "oracle",
+        "postgres",
+        "redshift",
+        "snowflake",
+        "spark",
+        "sqlite",
+        "sqlserver",
+        "trino"
+      ],
+      "type": "string"
+    },
+    "TableRule": {
+      "additionalProperties": false,
+      "description": "Access and sensitivity rules for one SQL table.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "pii": {
+          "items": {
+            "$ref": "#/$defs/PiiColumn"
+          },
+          "title": "Pii",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "TableRule",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Deterministic SQL access and data-masking policy.",
+  "properties": {
+    "access": {
+      "$ref": "#/$defs/AccessRules"
+    },
+    "denied_keywords": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Denied Keywords",
+      "type": "array"
+    },
+    "dialect": {
+      "$ref": "#/$defs/SqlDialect",
+      "default": "postgres"
+    },
+    "name": {
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "read_only": {
+      "default": true,
+      "title": "Read Only",
+      "type": "boolean"
+    },
+    "type": {
+      "const": "sql",
+      "title": "Type",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "type"
+  ],
+  "title": "SqlPolicy",
+  "type": "object"
+}

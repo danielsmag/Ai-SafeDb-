@@ -11,6 +11,7 @@ Fields:
 | `name` | no | URL segment for the exposed endpoint. Defaults to the file name. Lowercase letters, digits, `.`, `_`, `-`. |
 | `enabled` | no | `false` keeps the file as a template without mounting it. Defaults to `true`. |
 | `description` | no | Passed through as the exposed server's instructions. |
+| `policy` | no | Name of a validated YAML policy from `policies/`. Unknown names fail startup. |
 | `source.transport` | yes | `stdio`, `http`, or `sse`. |
 | `source.command`, `source.args`, `source.env`, `source.cwd` | stdio only | Child process to launch. |
 | `source.url`, `source.headers`, `source.read_timeout_seconds` | http/sse only | Remote MCP server to call. |
@@ -22,3 +23,19 @@ Fields:
 Any string value may reference the environment as `${VAR}` or `${VAR:-fallback}`,
 so tokens stay out of these files. A `${VAR}` without a fallback that is unset
 makes startup fail with a clear error.
+
+## SQL policies
+
+SQL policies live in `policies/*.yaml`. Each file declares `type: sql`, a
+`sqlglot` dialect, read-only behavior, denied keywords, database/schema/table
+allow lists, and optional PII handling per table column. Empty allow lists mean
+all values at that level are allowed.
+
+PII actions are:
+
+- `block`: reject a query selecting the column (and reject `SELECT *`).
+- `mask`: redact matching result fields while retaining useful shape.
+- `hash`: replace matching result fields with a deterministic SHA-256 prefix.
+
+Policy files reference `policies/policy.schema.json` for editor validation.
+After changing policy models, regenerate it with `make policy-schema`.

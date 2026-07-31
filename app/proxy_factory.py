@@ -17,8 +17,14 @@ from fastmcp.server.middleware import Middleware
 from app.core.config import GuardSettings
 from app.core.logging import logger
 from app.exceptions import ProxyBuildError
-from app.middleware import LlmGuardMiddleware, ToolPolicyMiddleware
+from app.middleware import (
+    LlmGuardMiddleware,
+    PiiMaskingMiddleware,
+    SqlPolicyMiddleware,
+    ToolPolicyMiddleware,
+)
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
+from app.policies import Policy, SqlPolicy
 from app.services.guard import GuardService
 
 
@@ -41,7 +47,11 @@ class ProxyFactory:
         self._guard_service: GuardService | None = guard_service
         self._guard_settings: GuardSettings = guard_settings or GuardSettings()
 
-    def create(self, config: McpServerConfig) -> FastMCP:
+    def create(
+        self,
+        config: McpServerConfig,
+        policy: Policy | None = None,
+    ) -> FastMCP:
         transport: ClientTransport = self._build_transport(config)
         logger.info(
             "Proxying server %r via %s",
@@ -51,6 +61,9 @@ class ProxyFactory:
         middleware: list[Middleware] = [
             ToolPolicyMiddleware(config.tools, server_name=config.name)
         ]
+        sql_policy: SqlPolicy | None = policy if isinstance(policy, SqlPolicy) else None
+        if sql_policy is not None:
+            middleware.append(SqlPolicyMiddleware(sql_policy, server_name=config.name))
         guard_enabled: bool = (
             config.guard.enabled
             if config.guard.enabled is not None
@@ -72,8 +85,11 @@ class ProxyFactory:
                     self._guard_service,
                     server_name=config.name,
                     inspect_results=inspect_results,
+                    policy=sql_policy,
                 )
             )
+        if sql_policy is not None:
+            middleware.append(PiiMaskingMiddleware(sql_policy))
         return create_proxy(
             transport,
             name=config.name,

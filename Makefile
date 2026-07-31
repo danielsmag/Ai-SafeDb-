@@ -1,4 +1,4 @@
-.PHONY: help sync run dev test lint format typecheck check agent \
+.PHONY: help sync run dev test lint format typecheck check policy-schema agent \
 	up down build logs ps db clean
 
 help:
@@ -11,6 +11,7 @@ help:
 	@echo "  format     - run ruff format"
 	@echo "  typecheck  - run pyright"
 	@echo "  check      - lint + typecheck + test"
+	@echo "  policy-schema - generate policy JSON Schema"
 	@echo "  agent      - run the exfiltrate-pii red-team scenario"
 	@echo "  up         - docker compose up --build gateway"
 	@echo "  down       - docker compose down"
@@ -43,11 +44,14 @@ typecheck:
 
 check: lint typecheck test
 
+policy-schema:
+	uv run python scripts/generate_policy_schema.py
+
 agent:
 	uv run python -m app.agents --scenario exfiltrate-pii
 
 up:
-	docker compose up --build gateway
+	docker compose up 
 
 down:
 	docker compose down

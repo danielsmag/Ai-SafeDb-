@@ -49,6 +49,7 @@ class AppSettings(BaseSettings):
     )
 
     config_dir: Path = Path("mcp-servers")
+    policies_dir: Path = Path("policies")
     mount_prefix: str = "/mcp"
     public_base_url: str = "http://localhost:8000"
     log_level: LogLevel = "INFO"

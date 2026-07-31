@@ -7,6 +7,7 @@
 name: postgres
 enabled: true
 description: Read-only schema inspection and SQL queries against the aisafedb PostgreSQL database.
+policy: pg-readonly
 
 source:
   transport: stdio

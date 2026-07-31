@@ -2,10 +2,12 @@
 
 from app.exceptions.exceptions import (
     ConfigError,
+    DuplicatePolicyError,
     DuplicateServerError,
     GatewayError,
     LlmUnavailableError,
     MissingEnvVarError,
+    PolicyViolationError,
     ProxyBuildError,
     ToolBlockedError,
     ToolGuardedError,
@@ -13,10 +15,12 @@ from app.exceptions.exceptions import (
 
 __all__: list[str] = [
     "ConfigError",
+    "DuplicatePolicyError",
     "DuplicateServerError",
     "GatewayError",
     "LlmUnavailableError",
     "MissingEnvVarError",
+    "PolicyViolationError",
     "ProxyBuildError",
     "ToolBlockedError",
     "ToolGuardedError",

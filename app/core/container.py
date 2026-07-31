@@ -5,6 +5,7 @@ from dependency_injector import containers, providers
 from app.core.config import AppSettings
 from app.domain.gateway_application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
+from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
@@ -20,6 +21,10 @@ class ApplicationContainer(containers.DeclarativeContainer):
     config_loader: providers.Factory[ConfigLoader] = providers.Factory(
         ConfigLoader,
         config_dir=settings.provided.config_dir,
+    )
+    policy_loader: providers.Factory[PolicyLoader] = providers.Factory(
+        PolicyLoader,
+        policies_dir=settings.provided.policies_dir,
     )
     llm_client: providers.Singleton[OpenAICompatibleLlmClient] = providers.Singleton(
         OpenAICompatibleLlmClient,
@@ -46,5 +51,6 @@ class ApplicationContainer(containers.DeclarativeContainer):
         GatewayApplication,
         settings=settings,
         loader=config_loader,
+        policy_loader=policy_loader,
         proxy_factory=proxy_factory,
     )

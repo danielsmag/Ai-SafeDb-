@@ -35,6 +35,16 @@ class DuplicateServerError(GatewayError):
         super().__init__(f"duplicate server name {name!r} in {first} and {second}")
 
 
+class DuplicatePolicyError(GatewayError):
+    """Two policy definitions claim the same name."""
+
+    def __init__(self, name: str, first: Path, second: Path) -> None:
+        self.name: str = name
+        self.first: Path = first
+        self.second: Path = second
+        super().__init__(f"duplicate policy name {name!r} in {first} and {second}")
+
+
 class ProxyBuildError(GatewayError):
     """A proxy could not be constructed for a server definition."""
 
@@ -72,4 +82,16 @@ class ToolGuardedError(GatewayError, ToolError):
         super().__init__(
             f"safety guard blocked tool {tool_name!r} on server "
             f"{server_name!r}: {reason}"
+        )
+
+
+class PolicyViolationError(GatewayError, ToolError):
+    """A deterministic server policy rejected a tool call."""
+
+    def __init__(self, server_name: str, tool_name: str, reason: str) -> None:
+        self.server_name: str = server_name
+        self.tool_name: str = tool_name
+        self.reason: str = reason
+        super().__init__(
+            f"policy blocked tool {tool_name!r} on server {server_name!r}: {reason}"
         )

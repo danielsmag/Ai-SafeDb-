@@ -75,6 +75,7 @@ class McpServerConfig(BaseModel):
     enabled: bool = True
     description: str | None = None
     source: McpSource
+    policy: str | None = Field(default=None, pattern=SERVER_NAME_PATTERN)
     tools: ToolPolicy = Field(default_factory=ToolPolicy)
     guard: GuardOverride = Field(default_factory=GuardOverride)
 

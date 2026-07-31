@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=policy.schema.json
+name: pg-readonly
+type: sql
+dialect: postgres
+read_only: true
+denied_keywords:
+  - pg_sleep
+  - dblink
+  - copy
+access:
+  databases:
+    - aisafedb
+  schemas:
+    - public
+  tables:
+    - name: public.customers
+      pii:
+        - column: first_name
+          kind: person_name
+          action: mask
+        - column: last_name
+          kind: person_name
+          action: mask
+        - column: email
+          kind: email
+          action: mask
+        - column: phone
+          kind: phone
+          action: mask
+        - column: date_of_birth
+          kind: date_of_birth
+          action: mask
+        - column: ssn
+          kind: social_security_number
+          action: block
+        - column: address_line1
+          kind: street_address
+          action: mask
+        - column: address_line2
+          kind: street_address
+          action: mask
+        - column: credit_card
+          kind: payment_card
+          action: block
+        - column: ip_address
+          kind: ip_address
+          action: hash
