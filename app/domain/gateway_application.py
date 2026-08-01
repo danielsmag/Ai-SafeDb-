@@ -1,21 +1,27 @@
 """FastAPI application assembly for the MCP gateway."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.utilities.lifespan import combine_lifespans
-from starlette.types import Lifespan
+from starlette.types import ASGIApp, Lifespan
 
 from app import __version__
+from app.connectors import PostgresPool
 from app.core.config import AppSettings
 from app.core.logging import logger
 from app.exceptions import GatewayError
+from app.http import wrap_with_session_terminate
 from app.models import McpServerConfig
 from app.policies import Policy, PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.schemas import HealthResponse, ServerListResponse, ServerSummary
 from app.services.config_loader import ConfigLoader
+from app.services.session import SessionStore
 
 
 class GatewayApplication:
@@ -27,11 +33,15 @@ class GatewayApplication:
         loader: ConfigLoader,
         proxy_factory: ProxyFactory,
         policy_loader: PolicyLoader | None = None,
+        postgres_pool: PostgresPool | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         self._settings: AppSettings = settings
         self._loader: ConfigLoader = loader
         self._proxy_factory: ProxyFactory = proxy_factory
         self._policy_loader: PolicyLoader | None = policy_loader
+        self._postgres_pool: PostgresPool | None = postgres_pool
+        self._session_store: SessionStore | None = session_store
         self._policies: dict[str, Policy] = {}
 
     def build(self) -> FastAPI:
@@ -49,10 +59,12 @@ class GatewayApplication:
         mcp_apps: dict[str, StarletteWithLifespan] = {
             config.name: self._build_mcp_app(config) for config in configs
         }
+        lifespans: list[Lifespan[FastAPI]] = []
+        if self._postgres_pool is not None and self._session_store is not None:
+            lifespans.append(self._database_lifespan)
+        lifespans.extend(mcp_app.lifespan for mcp_app in mcp_apps.values())
         lifespan: Lifespan[FastAPI] | None = (
-            combine_lifespans(*(mcp_app.lifespan for mcp_app in mcp_apps.values()))
-            if mcp_apps
-            else None
+            combine_lifespans(*lifespans) if lifespans else None
         )
 
         api: FastAPI = FastAPI(
@@ -66,10 +78,25 @@ class GatewayApplication:
 
         for config in configs:
             mount_path: str = config.mount_path(self._settings.mount_prefix)
-            api.mount(mount_path, mcp_apps[config.name], name=f"mcp-{config.name}")
+            mcp_app: StarletteWithLifespan = mcp_apps[config.name]
+            mounted: ASGIApp = mcp_app
+            if self._session_store is not None:
+                mounted = wrap_with_session_terminate(mcp_app, self._session_store)
+            api.mount(mount_path, mounted, name=f"mcp-{config.name}")
             logger.info("Exposing server %r at %s", config.name, mount_path)
 
         return api
+
+    @asynccontextmanager
+    async def _database_lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
+        assert self._postgres_pool is not None
+        assert self._session_store is not None
+        await self._postgres_pool.open()
+        try:
+            await self._session_store.ensure_schema()
+            yield
+        finally:
+            await self._postgres_pool.close()
 
     def _build_mcp_app(self, config: McpServerConfig) -> StarletteWithLifespan:
         policy: Policy | None = (

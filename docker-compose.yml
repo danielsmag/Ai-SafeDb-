@@ -10,15 +10,23 @@ services:
         required: false
     environment:
       GATEWAY_CONFIG_DIR: /app/mcp-servers
+      GATEWAY_POLICIES_DIR: /app/policies
       GATEWAY_PUBLIC_BASE_URL: ${GATEWAY_PUBLIC_BASE_URL:-http://localhost:8000}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
       GATEWAY_LLM__BASE_URL: ${GATEWAY_LLM__BASE_URL:-http://host.docker.internal:11434/v1}
       GATEWAY_GUARD__ENABLED: ${GATEWAY_GUARD__ENABLED:-false}
+      GATEWAY_DATABASE__HOST: postgres
+      GATEWAY_DATABASE__PORT: "5432"
+      GATEWAY_DATABASE__USER: ${POSTGRES_USER:-aisafe}
+      GATEWAY_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-aisafe}
+      GATEWAY_DATABASE__NAME: ${POSTGRES_DB:-aisafedb}
+      SAFE_DB_SCHEMA: ${SAFE_DB_SCHEMA:-aisafedb}
       POSTGRES_MCP_URL: postgresql://${POSTGRES_USER:-aisafe}:${POSTGRES_PASSWORD:-aisafe}@postgres:5432/${POSTGRES_DB:-aisafedb}
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     volumes:
       - ./mcp-servers:/app/mcp-servers:ro
+      - ./policies:/app/policies:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -5,18 +5,137 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import Tool, ToolResult
 from mcp import types as mt
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 
-from app.core.logging import logger
+from app.connectors.models import ApiKey, ClientInfo, SessionRecord
+from app.core.logging import bind_session, logger
 from app.core.tracing import span, trace
-from app.exceptions import PolicyViolationError, ToolBlockedError, ToolGuardedError
+from app.exceptions import (
+    AuthError,
+    PolicyViolationError,
+    ToolBlockedError,
+    ToolGuardedError,
+)
 from app.llm import GuardVerdict
 from app.models import ToolPolicy
 from app.policies.models import PiiColumn, SqlPolicy
 from app.policies.sql import SqlPolicyEnforcer, SqlPolicyViolation
 from app.services.guard import GuardService
+from app.services.session import SessionStore
+
+
+class SessionAuthMiddleware(Middleware):
+    """Require a Bearer API key and recognize each MCP transport session."""
+
+    def __init__(self, store: SessionStore, server_name: str) -> None:
+        self._store: SessionStore = store
+        self._server_name: str = server_name
+
+    async def on_initialize(
+        self,
+        context: MiddlewareContext[mt.InitializeRequest],
+        call_next: CallNext[mt.InitializeRequest, mt.InitializeResult | None],
+    ) -> mt.InitializeResult | None:
+        try:
+            api_key: ApiKey = await self._authenticate_request()
+            mcp_session_id: str = self._require_mcp_session_id(context)
+            client_info: ClientInfo = self._extract_client_info(context.message)
+            session: SessionRecord = await self._store.open_session(
+                mcp_session_id,
+                api_key,
+                self._server_name,
+                client_info,
+            )
+        except AuthError as err:
+            logger.warning(
+                "Session auth rejected initialize on server %r: %s",
+                self._server_name,
+                err.reason,
+            )
+            raise McpError(ErrorData(code=-32001, message=str(err))) from err
+
+        with bind_session(
+            session_id=session.id,
+            mcp_session_id=session.mcp_session_id,
+            api_key_name=session.api_key_name,
+        ):
+            logger.info(
+                "Opened MCP session on server %r client=%r/%r",
+                self._server_name,
+                session.client_name,
+                session.client_version,
+            )
+            return await call_next(context)
+
+    async def on_request(
+        self,
+        context: MiddlewareContext[mt.Request[Any, Any]],
+        call_next: CallNext[mt.Request[Any, Any], Any],
+    ) -> Any:
+        if context.method == "initialize":
+            return await call_next(context)
+        session: SessionRecord = await self._resolve_session(context)
+        with bind_session(
+            session_id=session.id,
+            mcp_session_id=session.mcp_session_id,
+            api_key_name=session.api_key_name,
+        ):
+            return await call_next(context)
+
+    async def _authenticate_request(self) -> ApiKey:
+        headers: dict[str, str] = get_http_headers(include={"authorization"})
+        authorization: str | None = headers.get("authorization")
+        if authorization is None:
+            raise AuthError(self._server_name, "missing Authorization header")
+        parts: list[str] = authorization.split(" ", maxsplit=1)
+        if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+            raise AuthError(
+                self._server_name,
+                "Authorization header must be Bearer <api_key>",
+            )
+        raw_key: str = parts[1].strip()
+        api_key: ApiKey | None = await self._store.authenticate(raw_key)
+        if api_key is None:
+            raise AuthError(self._server_name, "invalid or revoked API key")
+        return api_key
+
+    async def _resolve_session(
+        self,
+        context: MiddlewareContext[Any],
+    ) -> SessionRecord:
+        mcp_session_id: str = self._require_mcp_session_id(context)
+        session: SessionRecord | None = await self._store.touch(mcp_session_id)
+        if session is None:
+            raise AuthError(
+                self._server_name,
+                "unknown or closed MCP session; re-initialize with a valid API key",
+            )
+        return session
+
+    def _require_mcp_session_id(self, context: MiddlewareContext[Any]) -> str:
+        fastmcp_context = context.fastmcp_context
+        if fastmcp_context is None:
+            raise AuthError(self._server_name, "MCP session context unavailable")
+        try:
+            mcp_session_id: str = fastmcp_context.session_id
+        except RuntimeError as err:
+            raise AuthError(self._server_name, "MCP session id unavailable") from err
+        if not mcp_session_id:
+            raise AuthError(self._server_name, "empty MCP session id")
+        return mcp_session_id
+
+    @staticmethod
+    def _extract_client_info(message: mt.InitializeRequest) -> ClientInfo:
+        params: mt.InitializeRequestParams | None = message.params
+        if params is None or params.clientInfo is None:
+            return ClientInfo()
+        info: mt.Implementation = params.clientInfo
+        return ClientInfo(name=info.name, version=info.version)
 
 
 class ToolPolicyMiddleware(Middleware):

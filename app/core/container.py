@@ -2,6 +2,7 @@
 
 from dependency_injector import containers, providers
 
+from app.connectors import PostgresPool
 from app.core.config import AppSettings
 from app.domain.gateway_application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
@@ -9,6 +10,7 @@ from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
+from app.services.session import SessionService
 
 
 class ApplicationContainer(containers.DeclarativeContainer):
@@ -41,10 +43,20 @@ class ApplicationContainer(containers.DeclarativeContainer):
         on_error=settings.provided.guard.on_error,
         cache_ttl_seconds=settings.provided.guard.cache_ttl_seconds,
     )
+    postgres_pool: providers.Singleton[PostgresPool] = providers.Singleton(
+        PostgresPool,
+        settings=settings.provided.database,
+    )
+    session_service: providers.Singleton[SessionService] = providers.Singleton(
+        SessionService,
+        pool=postgres_pool,
+        idle_ttl_seconds=settings.provided.session.idle_ttl_seconds,
+    )
     proxy_factory: providers.Singleton[ProxyFactory] = providers.Singleton(
         ProxyFactory,
         guard_service=guard_service,
         guard_settings=settings.provided.guard,
+        session_store=session_service,
     )
 
     gateway_application: providers.Factory[GatewayApplication] = providers.Factory(
@@ -53,4 +65,6 @@ class ApplicationContainer(containers.DeclarativeContainer):
         loader=config_loader,
         policy_loader=policy_loader,
         proxy_factory=proxy_factory,
+        postgres_pool=postgres_pool,
+        session_store=session_service,
     )

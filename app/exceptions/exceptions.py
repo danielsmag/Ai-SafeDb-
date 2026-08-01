@@ -57,6 +57,21 @@ class LlmUnavailableError(GatewayError):
     """A local model request failed or returned an invalid response."""
 
 
+class AuthError(GatewayError, ToolError):
+    """An MCP client failed API-key authentication or session recognition.
+
+    Subclasses `ToolError` so FastMCP reports the reason to the client instead of
+    masking it as an internal error.
+    """
+
+    def __init__(self, server_name: str, reason: str) -> None:
+        self.server_name: str = server_name
+        self.reason: str = reason
+        super().__init__(
+            f"authentication failed for gateway server {server_name!r}: {reason}"
+        )
+
+
 class ToolBlockedError(GatewayError, ToolError):
     """A tool call was rejected by the server's tool policy.
 

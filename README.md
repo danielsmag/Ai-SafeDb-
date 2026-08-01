@@ -27,15 +27,43 @@ curl localhost:8000/health
 curl localhost:8000/servers
 ```
 
-Point an MCP client at the new URL, e.g. in `~/.cursor/mcp.json`:
+Point an MCP client at the new URL with a Bearer API key. Local seed key
+(dev only): `aisk_dev_local_00000000000000000001`.
 
 ```json
 {
   "mcpServers": {
-    "github-via-gateway": { "url": "http://localhost:8000/mcp/github" }
+    "github-via-gateway": {
+      "url": "http://localhost:8000/mcp/github",
+      "headers": {
+        "Authorization": "Bearer aisk_dev_local_00000000000000000001"
+      }
+    }
   }
 }
 ```
+
+Python / FastMCP:
+
+```python
+from fastmcp import Client
+
+async with Client(
+    "http://localhost:8000/mcp/postgres",
+    auth="aisk_dev_local_00000000000000000001",
+) as client:
+    tools = await client.list_tools()
+```
+
+Each successful connect opens a row in `{SAFE_DB_SCHEMA}.sessions` bound to the
+API key and MCP `mcp-session-id`. Gateway logs include `session`, `mcp_session`,
+and `key` fields. DB connection knobs: `GATEWAY_DATABASE__*` and `SAFE_DB_SCHEMA`
+(see `.env.example`).
+
+Sessions expire after `GATEWAY_SESSION__IDLE_TTL_SECONDS` with no requests
+(default **24 hours**; `0` disables). Clients that send HTTP `DELETE` with
+`mcp-session-id` (Streamable HTTP session terminate) also close the row
+immediately.
 
 ## Defining a server
 

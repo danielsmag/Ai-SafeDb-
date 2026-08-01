@@ -20,12 +20,14 @@ from app.exceptions import ProxyBuildError
 from app.middleware import (
     LlmGuardMiddleware,
     PiiMaskingMiddleware,
+    SessionAuthMiddleware,
     SqlPolicyMiddleware,
     ToolPolicyMiddleware,
 )
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
 from app.policies import Policy, SqlPolicy
 from app.services.guard import GuardService
+from app.services.session import SessionStore
 
 
 class ProxyFactory:
@@ -40,12 +42,14 @@ class ProxyFactory:
         environ: Mapping[str, str] | None = None,
         guard_service: GuardService | None = None,
         guard_settings: GuardSettings | None = None,
+        session_store: SessionStore | None = None,
     ) -> None:
         self._environ: Mapping[str, str] = (
             environ if environ is not None else os.environ
         )
         self._guard_service: GuardService | None = guard_service
         self._guard_settings: GuardSettings = guard_settings or GuardSettings()
+        self._session_store: SessionStore | None = session_store
 
     def create(
         self,
@@ -58,9 +62,12 @@ class ProxyFactory:
             config.name,
             type(transport).__name__,
         )
-        middleware: list[Middleware] = [
-            ToolPolicyMiddleware(config.tools, server_name=config.name)
-        ]
+        middleware: list[Middleware] = []
+        if self._session_store is not None:
+            middleware.append(
+                SessionAuthMiddleware(self._session_store, server_name=config.name)
+            )
+        middleware.append(ToolPolicyMiddleware(config.tools, server_name=config.name))
         sql_policy: SqlPolicy | None = policy if isinstance(policy, SqlPolicy) else None
         if sql_policy is not None:
             middleware.append(SqlPolicyMiddleware(sql_policy, server_name=config.name))

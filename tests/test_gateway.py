@@ -12,11 +12,13 @@ from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 from fastmcp.exceptions import ToolError
 from mcp import types as mt
+from mcp.shared.exceptions import McpError
 
 from app.main import GatewayApplication
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
+from app.services.session import DEV_API_KEY, MemorySessionService
 from app.settings import AppSettings
 from tests.fakes import FakeLlmClient
 
@@ -29,10 +31,12 @@ def build_app(config_dir: Path) -> FastAPI:
         config_dir=config_dir,
         public_base_url=BASE_URL,
     )
+    session_store: MemorySessionService = MemorySessionService()
     gateway: GatewayApplication = GatewayApplication(
         settings=settings,
         loader=ConfigLoader(config_dir, environ={"PYTHON_BIN": sys.executable}),
-        proxy_factory=ProxyFactory(),
+        proxy_factory=ProxyFactory(session_store=session_store),
+        session_store=session_store,
     )
     return gateway.build()
 
@@ -51,7 +55,12 @@ def asgi_client(app: FastAPI) -> httpx.AsyncClient:
     )
 
 
-def mcp_client(app: FastAPI, path: str) -> Client:
+def mcp_client(
+    app: FastAPI,
+    path: str,
+    *,
+    api_key: str | None = DEV_API_KEY,
+) -> Client:
     """An MCP client that talks to the gateway in-process over ASGI."""
 
     def client_factory(
@@ -74,6 +83,7 @@ def mcp_client(app: FastAPI, path: str) -> Client:
     return Client(
         StreamableHttpTransport(
             url=f"{BASE_URL}{path}",
+            auth=api_key,
             httpx_client_factory=client_factory,
         )
     )
@@ -136,6 +146,20 @@ async def test_blocked_tool_is_hidden_and_rejected(gateway_app: FastAPI) -> None
             await client.call_tool("delete_thing", {"name": "abc"})
 
 
+async def test_missing_api_key_is_rejected(gateway_app: FastAPI) -> None:
+    async with running(gateway_app) as app:
+        with pytest.raises(McpError, match="(?i)auth"):
+            async with mcp_client(app, "/mcp/source", api_key=None):
+                pass
+
+
+async def test_invalid_api_key_is_rejected(gateway_app: FastAPI) -> None:
+    async with running(gateway_app) as app:
+        with pytest.raises(McpError, match="(?i)auth"):
+            async with mcp_client(app, "/mcp/source", api_key="not-a-real-key"):
+                pass
+
+
 async def test_empty_config_dir_serves_only_gateway_routes(config_dir: Path) -> None:
     async with running(build_app(config_dir)) as app, asgi_client(app) as client:
         health: httpx.Response = await client.get("/health")
@@ -168,13 +192,16 @@ async def test_safety_guard_rejects_sensitive_tool_arguments(
         on_error="block",
         cache_ttl_seconds=60,
     )
+    session_store: MemorySessionService = MemorySessionService()
     gateway: GatewayApplication = GatewayApplication(
         settings=settings,
         loader=ConfigLoader(config_dir, environ={"PYTHON_BIN": sys.executable}),
         proxy_factory=ProxyFactory(
             guard_service=guard,
             guard_settings=settings.guard,
+            session_store=session_store,
         ),
+        session_store=session_store,
     )
     app: FastAPI = gateway.build()
 

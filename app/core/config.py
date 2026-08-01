@@ -1,13 +1,17 @@
 """Validated runtime configuration for the MCP gateway."""
 
+import os
+import re
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type GuardErrorMode = Literal["block", "allow"]
+
+_SCHEMA_NAME_RE: re.Pattern[str] = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 class LlmSettings(BaseModel):
@@ -33,6 +37,58 @@ class GuardSettings(BaseModel):
     on_error: GuardErrorMode = "block"
     inspect_results: bool = True
     cache_ttl_seconds: float = Field(default=300.0, ge=0)
+
+
+class SessionSettings(BaseModel):
+    """MCP session recognition and lifetime policy."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    # 0 disables idle expiry. Default: 24 hours without requests.
+    idle_ttl_seconds: float = Field(default=86_400.0, ge=0)
+
+
+class DatabaseSettings(BaseModel):
+    """Postgres connection used for gateway API keys and MCP sessions."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    host: str = "localhost"
+    port: int = Field(default=5432, ge=1, le=65535)
+    user: str = "aisafe"
+    password: str = "aisafe"
+    name: str = "aisafedb"
+    schema_name: str = "aisafedb"
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_safe_db_schema_env(cls, data: Any) -> Any:
+        """Prefer top-level ``SAFE_DB_SCHEMA`` when the nested field is unset."""
+        if not isinstance(data, dict):
+            return data
+        if data.get("schema_name"):
+            return data
+        env_schema: str | None = os.environ.get("SAFE_DB_SCHEMA")
+        if env_schema:
+            return {**data, "schema_name": env_schema}
+        return data
+
+    @field_validator("schema_name")
+    @classmethod
+    def validate_schema_name(cls, value: str) -> str:
+        """Reject identifiers that cannot be used safely in DDL."""
+        if not _SCHEMA_NAME_RE.fullmatch(value):
+            raise ValueError(
+                f"schema_name must match [A-Za-z_][A-Za-z0-9_]* (got {value!r})"
+            )
+        return value
+
+    def dsn(self) -> str:
+        """Build a libpq connection string for psycopg."""
+        return (
+            f"postgresql://{self.user}:{self.password}"
+            f"@{self.host}:{self.port}/{self.name}"
+        )
 
 
 class AppSettings(BaseSettings):
@@ -61,6 +117,8 @@ class AppSettings(BaseSettings):
     allowed_origins: list[str] = Field(default_factory=list)
     llm: LlmSettings = Field(default_factory=LlmSettings)
     guard: GuardSettings = Field(default_factory=GuardSettings)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    session: SessionSettings = Field(default_factory=SessionSettings)
 
     @field_validator("mount_prefix")
     @classmethod

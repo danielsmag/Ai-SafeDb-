@@ -4,6 +4,10 @@ Every `*.yaml` / `*.yml` file in this folder defines one source MCP server that 
 gateway re-exposes at `/mcp/<name>`. Files are loaded at startup; restart the
 gateway after changing them.
 
+Clients must send `Authorization: Bearer <api_key>` on every MCP HTTP request.
+The local-dev seed key is `aisk_dev_local_00000000000000000001` (hashed in
+`{SAFE_DB_SCHEMA}.api_keys`). Sessions are stored in `{SAFE_DB_SCHEMA}.sessions`.
+
 Fields:
 
 | Field | Required | Description |
