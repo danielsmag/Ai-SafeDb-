@@ -40,6 +40,9 @@ class SessionRecord(BaseModel):
     api_key_id: UUID
     api_key_name: str = Field(description="Denormalized key name for logging")
     server_name: str
+    data_key: str = Field(
+        description="Per-session secret for future keyed hashing of DB data"
+    )
     client_name: str | None = None
     client_version: str | None = None
     created_at: datetime

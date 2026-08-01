@@ -45,4 +45,9 @@ def test_bootstrap_exposes_container_on_application_state(tmp_path: Path) -> Non
     route_paths: set[str | None] = {
         getattr(route, "path", None) for route in api.routes
     }
-    assert route_paths >= {"/health", "/servers"}
+    assert route_paths >= {
+        "/health",
+        "/servers",
+        "/sessions/data-key",
+        "/sessions/{mcp_session_id}/data-key",
+    }

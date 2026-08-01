@@ -17,6 +17,7 @@ from app.services.session import (
     DEV_API_KEY,
     MemorySessionService,
     api_key_prefix,
+    generate_session_data_key,
     hash_api_key,
 )
 
@@ -27,6 +28,14 @@ def test_hash_api_key_is_stable_sha256() -> None:
         "c869076a37be0ccc37c1e36ffb64454b288ae874390783b03277f71978258183"
     )
     assert api_key_prefix(DEV_API_KEY) == "aisk_dev"
+
+
+def test_generate_session_data_key_is_unique() -> None:
+    first: str = generate_session_data_key()
+    second: str = generate_session_data_key()
+    assert first
+    assert second
+    assert first != second
 
 
 def test_database_settings_read_safe_db_schema_env(
@@ -59,11 +68,36 @@ async def test_memory_session_authenticate_and_open() -> None:
     assert session.mcp_session_id == "mcp-sess-1"
     assert session.api_key_name == "local-dev"
     assert session.client_name == "test-client"
+    assert session.data_key
 
     touched = await store.touch("mcp-sess-1")
     assert touched is not None
     assert touched.id == session.id
+    assert touched.data_key == session.data_key
     assert await store.touch("missing") is None
+
+
+async def test_memory_session_data_key_stable_across_reconnect() -> None:
+    store: MemorySessionService = MemorySessionService()
+    api_key = await store.authenticate(DEV_API_KEY)
+    assert api_key is not None
+
+    first = await store.open_session(
+        mcp_session_id="mcp-stable-key",
+        api_key=api_key,
+        server_name="postgres",
+        client_info=ClientInfo(name="c", version="1"),
+    )
+    second = await store.open_session(
+        mcp_session_id="mcp-stable-key",
+        api_key=api_key,
+        server_name="postgres",
+        client_info=ClientInfo(name="c2", version="2"),
+    )
+    assert first.data_key
+    assert second.data_key == first.data_key
+    assert second.id == first.id
+    assert second.client_name == "c2"
 
 
 async def test_memory_session_idle_ttl_closes() -> None:
@@ -94,6 +128,25 @@ async def test_memory_session_close() -> None:
     assert await store.close_session("mcp-close") is True
     assert await store.touch("mcp-close") is None
     assert await store.close_session("mcp-close") is False
+
+
+async def test_memory_session_get_session() -> None:
+    store: MemorySessionService = MemorySessionService()
+    api_key = await store.authenticate(DEV_API_KEY)
+    assert api_key is not None
+    opened = await store.open_session(
+        mcp_session_id="mcp-get",
+        api_key=api_key,
+        server_name="postgres",
+        client_info=ClientInfo(),
+    )
+    fetched = await store.get_session("mcp-get")
+    assert fetched is not None
+    assert fetched.id == opened.id
+    assert fetched.data_key == opened.data_key
+    assert await store.get_session("missing") is None
+    await store.close_session("mcp-get")
+    assert await store.get_session("mcp-get") is None
 
 
 def test_bind_session_stamps_contextvars() -> None:

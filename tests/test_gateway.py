@@ -14,6 +14,7 @@ from fastmcp.exceptions import ToolError
 from mcp import types as mt
 from mcp.shared.exceptions import McpError
 
+from app.connectors.models import ClientInfo
 from app.main import GatewayApplication
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
@@ -167,6 +168,89 @@ async def test_empty_config_dir_serves_only_gateway_routes(config_dir: Path) -> 
 
     assert health.json()["servers"] == 0
     assert missing.status_code == 404
+
+
+async def test_session_data_key_rest_api(
+    config_dir: Path,
+    write_config: Callable[[str, str], Path],
+) -> None:
+    write_config(
+        "source.yaml",
+        f"""
+        name: source
+        source:
+          transport: stdio
+          command: ${{PYTHON_BIN}}
+          args: ["{SOURCE_SERVER}"]
+        """,
+    )
+    other_key: str = "aisk_other_local_00000000000000000002"
+    store: MemorySessionService = MemorySessionService(
+        raw_keys={DEV_API_KEY: "local-dev", other_key: "other"}
+    )
+    settings: AppSettings = AppSettings(
+        config_dir=config_dir,
+        public_base_url=BASE_URL,
+    )
+    app: FastAPI = GatewayApplication(
+        settings=settings,
+        loader=ConfigLoader(config_dir, environ={"PYTHON_BIN": sys.executable}),
+        proxy_factory=ProxyFactory(session_store=store),
+        session_store=store,
+    ).build()
+
+    api_key = await store.authenticate(DEV_API_KEY)
+    assert api_key is not None
+    session = await store.open_session(
+        mcp_session_id="mcp-rest-1",
+        api_key=api_key,
+        server_name="source",
+        client_info=ClientInfo(name="notebook", version="1"),
+    )
+
+    async with running(app) as running_app, asgi_client(running_app) as client:
+        by_api_key: httpx.Response = await client.get(
+            "/sessions/data-key",
+            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
+        )
+        ok: httpx.Response = await client.get(
+            f"/sessions/{session.mcp_session_id}/data-key",
+            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
+        )
+        missing_auth: httpx.Response = await client.get(
+            "/sessions/data-key"
+        )
+        bad_auth: httpx.Response = await client.get(
+            "/sessions/data-key",
+            headers={"Authorization": "Bearer not-a-real-key"},
+        )
+        wrong_owner: httpx.Response = await client.get(
+            f"/sessions/{session.mcp_session_id}/data-key",
+            headers={"Authorization": f"Bearer {other_key}"},
+        )
+        no_session_for_other: httpx.Response = await client.get(
+            "/sessions/data-key",
+            headers={"Authorization": f"Bearer {other_key}"},
+        )
+        unknown: httpx.Response = await client.get(
+            "/sessions/does-not-exist/data-key",
+            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
+        )
+
+    expected: dict[str, str] = {
+        "session_id": str(session.id),
+        "mcp_session_id": session.mcp_session_id,
+        "data_key": session.data_key,
+    }
+    assert by_api_key.status_code == 200
+    assert by_api_key.json() == expected
+    assert ok.status_code == 200
+    assert ok.json() == expected
+    assert missing_auth.status_code == 401
+    assert bad_auth.status_code == 401
+    assert wrong_owner.status_code == 403
+    assert no_session_for_other.status_code == 404
+    assert unknown.status_code == 404
 
 
 async def test_safety_guard_rejects_sensitive_tool_arguments(

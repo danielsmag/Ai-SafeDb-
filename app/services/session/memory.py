@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
-from app.services.session.keys import api_key_prefix, hash_api_key
+from app.services.session.keys import (
+    api_key_prefix,
+    generate_session_data_key,
+    hash_api_key,
+)
 
 # Same plaintext as init/02_gateway.sql — tests and local docs share it.
 DEV_API_KEY: str = "aisk_dev_local_00000000000000000001"
@@ -58,12 +62,18 @@ class MemorySessionService:
         now: datetime = datetime.now(UTC)
         existing: SessionRecord | None = self._sessions.get(mcp_session_id)
         session_id: UUID = existing.id if existing is not None else uuid4()
+        data_key: str = (
+            existing.data_key
+            if existing is not None
+            else generate_session_data_key()
+        )
         record: SessionRecord = SessionRecord(
             id=session_id,
             mcp_session_id=mcp_session_id,
             api_key_id=api_key.id,
             api_key_name=api_key.name,
             server_name=server_name,
+            data_key=data_key,
             client_name=client_info.name,
             client_version=client_info.version,
             created_at=existing.created_at if existing is not None else now,
@@ -85,6 +95,33 @@ class MemorySessionService:
         )
         self._sessions[mcp_session_id] = updated
         return updated
+
+    async def get_session(self, mcp_session_id: str) -> SessionRecord | None:
+        existing: SessionRecord | None = self._sessions.get(mcp_session_id)
+        if existing is None or existing.closed_at is not None:
+            return None
+        if self._is_idle_expired(existing.last_seen_at):
+            await self.close_session(mcp_session_id)
+            return None
+        return existing
+
+    async def get_latest_open_session(
+        self, api_key_id: UUID
+    ) -> SessionRecord | None:
+        open_sessions: list[SessionRecord] = [
+            session
+            for session in self._sessions.values()
+            if session.api_key_id == api_key_id and session.closed_at is None
+        ]
+        if not open_sessions:
+            return None
+        latest: SessionRecord = max(
+            open_sessions, key=lambda session: session.last_seen_at
+        )
+        if self._is_idle_expired(latest.last_seen_at):
+            await self.close_session(latest.mcp_session_id)
+            return None
+        return latest
 
     async def close_session(self, mcp_session_id: str) -> bool:
         existing: SessionRecord | None = self._sessions.get(mcp_session_id)
