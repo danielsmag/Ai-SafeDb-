@@ -11,7 +11,7 @@ from psycopg import AsyncConnection, sql
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
 from app.connectors.postgres import PostgresPool
 from app.core.logging import logger
-from app.services.session.keys import hash_api_key
+from app.services.session.keys import generate_session_data_key, hash_api_key
 
 _DEV_KEY_ID: UUID = UUID("00000000-0000-4000-8000-000000000001")
 _DEV_KEY_NAME: str = "local-dev"
@@ -35,6 +35,12 @@ class SessionStore(Protocol):
     ) -> SessionRecord: ...
 
     async def touch(self, mcp_session_id: str) -> SessionRecord | None: ...
+
+    async def get_session(self, mcp_session_id: str) -> SessionRecord | None: ...
+
+    async def get_latest_open_session(
+        self, api_key_id: UUID
+    ) -> SessionRecord | None: ...
 
     async def close_session(self, mcp_session_id: str) -> bool: ...
 
@@ -82,6 +88,7 @@ class SessionService:
                         api_key_id      UUID NOT NULL
                             REFERENCES {}.api_keys (id),
                         server_name     TEXT NOT NULL,
+                        data_key        TEXT NOT NULL,
                         client_name     TEXT,
                         client_version  TEXT,
                         created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -90,6 +97,23 @@ class SessionService:
                     )
                     """
                 ).format(schema_id, schema_id)
+            )
+            await conn.execute(
+                sql.SQL(
+                    """
+                    ALTER TABLE {}.sessions
+                        ADD COLUMN IF NOT EXISTS data_key TEXT
+                    """
+                ).format(schema_id)
+            )
+            await self._backfill_missing_data_keys(conn)
+            await conn.execute(
+                sql.SQL(
+                    """
+                    ALTER TABLE {}.sessions
+                        ALTER COLUMN data_key SET NOT NULL
+                    """
+                ).format(schema_id)
             )
             await conn.execute(
                 sql.SQL(
@@ -142,16 +166,17 @@ class SessionService:
     ) -> SessionRecord:
         """Insert or refresh a session row for the MCP transport session id."""
         session_id: UUID = uuid4()
+        data_key: str = generate_session_data_key()
         now: datetime = datetime.now(UTC)
         async with self._pool.connection() as conn:
             await conn.execute(
                 sql.SQL(
                     """
                     INSERT INTO {}.sessions (
-                        id, mcp_session_id, api_key_id, server_name,
+                        id, mcp_session_id, api_key_id, server_name, data_key,
                         client_name, client_version, created_at, last_seen_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (mcp_session_id) DO UPDATE SET
                         api_key_id = EXCLUDED.api_key_id,
                         server_name = EXCLUDED.server_name,
@@ -166,6 +191,7 @@ class SessionService:
                     mcp_session_id,
                     api_key.id,
                     server_name,
+                    data_key,
                     client_info.name,
                     client_info.version,
                     now,
@@ -225,6 +251,80 @@ class SessionService:
             return None
         return self._row_to_session(refreshed)
 
+    async def get_session(self, mcp_session_id: str) -> SessionRecord | None:
+        """Return an open, non-idle session without refreshing last_seen_at."""
+        async with self._pool.connection() as conn:
+            row: dict[str, Any] | None = await self._fetch_session(conn, mcp_session_id)
+            if row is None or row.get("closed_at") is not None:
+                await conn.commit()
+                return None
+            if self._is_idle_expired(row["last_seen_at"]):
+                await conn.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}.sessions
+                           SET closed_at = NOW()
+                         WHERE mcp_session_id = %s
+                           AND closed_at IS NULL
+                        """
+                    ).format(sql.Identifier(self._schema)),
+                    (mcp_session_id,),
+                )
+                await conn.commit()
+                logger.info(
+                    "Closed idle MCP session mcp_session_id=%r idle_ttl_seconds=%s",
+                    mcp_session_id,
+                    self._idle_ttl_seconds,
+                )
+                return None
+            await conn.commit()
+        return self._row_to_session(row)
+
+    async def get_latest_open_session(
+        self, api_key_id: UUID
+    ) -> SessionRecord | None:
+        """Return the most recently seen open session for an API key."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
+                           s.server_name, s.data_key, s.client_name, s.client_version,
+                           s.created_at, s.last_seen_at, s.closed_at
+                      FROM {}.sessions AS s
+                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
+                     WHERE s.api_key_id = %s
+                       AND s.closed_at IS NULL
+                     ORDER BY s.last_seen_at DESC
+                     LIMIT 1
+                    """
+                ).format(
+                    sql.Identifier(self._schema),
+                    sql.Identifier(self._schema),
+                ),
+                (api_key_id,),
+            )
+            row: dict[str, Any] | None = await result.fetchone()
+            if row is None:
+                await conn.commit()
+                return None
+            if self._is_idle_expired(row["last_seen_at"]):
+                await conn.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {}.sessions
+                           SET closed_at = NOW()
+                         WHERE id = %s
+                           AND closed_at IS NULL
+                        """
+                    ).format(sql.Identifier(self._schema)),
+                    (row["id"],),
+                )
+                await conn.commit()
+                return None
+            await conn.commit()
+        return self._row_to_session(row)
+
     async def close_session(self, mcp_session_id: str) -> bool:
         """Mark a session closed (client DELETE / disconnect).
 
@@ -260,6 +360,31 @@ class SessionService:
         idle_seconds: float = (now - seen).total_seconds()
         return idle_seconds > self._idle_ttl_seconds
 
+    async def _backfill_missing_data_keys(self, conn: AsyncConnection) -> None:
+        """Mint data_key for legacy session rows created before this column."""
+        result: Any = await conn.execute(
+            sql.SQL(
+                """
+                SELECT id
+                  FROM {}.sessions
+                 WHERE data_key IS NULL
+                """
+            ).format(sql.Identifier(self._schema))
+        )
+        rows: list[dict[str, Any]] = await result.fetchall()
+        for row in rows:
+            await conn.execute(
+                sql.SQL(
+                    """
+                    UPDATE {}.sessions
+                       SET data_key = %s
+                     WHERE id = %s
+                       AND data_key IS NULL
+                    """
+                ).format(sql.Identifier(self._schema)),
+                (generate_session_data_key(), row["id"]),
+            )
+
     async def _fetch_api_key(
         self, conn: AsyncConnection, key_hash: str
     ) -> dict[str, Any] | None:
@@ -285,7 +410,7 @@ class SessionService:
             sql.SQL(
                 """
                 SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
-                       s.server_name, s.client_name, s.client_version,
+                       s.server_name, s.data_key, s.client_name, s.client_version,
                        s.created_at, s.last_seen_at, s.closed_at
                   FROM {}.sessions AS s
                   JOIN {}.api_keys AS k ON k.id = s.api_key_id
@@ -317,6 +442,7 @@ class SessionService:
             api_key_id=row["api_key_id"],
             api_key_name=row["api_key_name"],
             server_name=row["server_name"],
+            data_key=row["data_key"],
             client_name=row["client_name"],
             client_version=row["client_version"],
             created_at=row["created_at"],

@@ -1,5 +1,7 @@
 """Response models for the gateway's own HTTP API."""
 
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from app.models import McpServerConfig, ToolPolicy
@@ -31,3 +33,11 @@ class ServerSummary(BaseModel):
 
 class ServerListResponse(BaseModel):
     servers: list[ServerSummary]
+
+
+class SessionDataKeyResponse(BaseModel):
+    """Per-session secret used for future keyed hashing of DB data."""
+
+    session_id: UUID
+    mcp_session_id: str
+    data_key: str

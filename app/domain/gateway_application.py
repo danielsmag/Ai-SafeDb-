@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 from fastmcp import FastMCP
 from fastmcp.server.http import StarletteWithLifespan
@@ -12,6 +12,7 @@ from starlette.types import ASGIApp, Lifespan
 
 from app import __version__
 from app.connectors import PostgresPool
+from app.connectors.models import ApiKey, SessionRecord
 from app.core.config import AppSettings
 from app.core.logging import logger
 from app.exceptions import GatewayError
@@ -19,7 +20,12 @@ from app.http import wrap_with_session_terminate
 from app.models import McpServerConfig
 from app.policies import Policy, PolicyLoader
 from app.proxy_factory import ProxyFactory
-from app.schemas import HealthResponse, ServerListResponse, ServerSummary
+from app.schemas import (
+    HealthResponse,
+    ServerListResponse,
+    ServerSummary,
+    SessionDataKeyResponse,
+)
 from app.services.config_loader import ConfigLoader
 from app.services.session import SessionStore
 
@@ -120,6 +126,7 @@ class GatewayApplication:
             ServerSummary.from_config(config, url=self._public_url(config))
             for config in configs
         ]
+        store: SessionStore | None = self._session_store
 
         @api.get("/health", response_model=HealthResponse, tags=["gateway"])
         async def health() -> HealthResponse:
@@ -130,6 +137,87 @@ class GatewayApplication:
         @api.get("/servers", response_model=ServerListResponse, tags=["gateway"])
         async def servers() -> ServerListResponse:
             return ServerListResponse(servers=summaries)
+
+        if store is not None:
+
+            @api.get(
+                "/sessions/data-key",
+                response_model=SessionDataKeyResponse,
+                tags=["sessions"],
+            )
+            async def get_data_key_for_api_key(
+                authorization: str | None = Header(default=None),
+            ) -> SessionDataKeyResponse:
+                api_key: ApiKey = await self._require_bearer_api_key(
+                    store, authorization
+                )
+                session: SessionRecord | None = await store.get_latest_open_session(
+                    api_key.id
+                )
+                if session is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="no open session for this API key",
+                    )
+                return SessionDataKeyResponse(
+                    session_id=session.id,
+                    mcp_session_id=session.mcp_session_id,
+                    data_key=session.data_key,
+                )
+
+            @api.get(
+                "/sessions/{mcp_session_id}/data-key",
+                response_model=SessionDataKeyResponse,
+                tags=["sessions"],
+            )
+            async def get_session_data_key(
+                mcp_session_id: str = Path(min_length=1),
+                authorization: str | None = Header(default=None),
+            ) -> SessionDataKeyResponse:
+                api_key: ApiKey = await self._require_bearer_api_key(
+                    store, authorization
+                )
+                session: SessionRecord | None = await store.get_session(mcp_session_id)
+                if session is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="unknown or closed MCP session",
+                    )
+                if session.api_key_id != api_key.id:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="API key does not own this session",
+                    )
+                return SessionDataKeyResponse(
+                    session_id=session.id,
+                    mcp_session_id=session.mcp_session_id,
+                    data_key=session.data_key,
+                )
+
+    async def _require_bearer_api_key(
+        self,
+        store: SessionStore,
+        authorization: str | None,
+    ) -> ApiKey:
+        if authorization is None:
+            raise HTTPException(
+                status_code=401,
+                detail="missing Authorization header",
+            )
+        parts: list[str] = authorization.split(" ", maxsplit=1)
+        if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+            raise HTTPException(
+                status_code=401,
+                detail="Authorization header must be Bearer <api_key>",
+            )
+        raw_key: str = parts[1].strip()
+        api_key: ApiKey | None = await store.authenticate(raw_key)
+        if api_key is None:
+            raise HTTPException(
+                status_code=401,
+                detail="invalid or revoked API key",
+            )
+        return api_key
 
     def _register_exception_handlers(self, api: FastAPI) -> None:
         @api.exception_handler(GatewayError)

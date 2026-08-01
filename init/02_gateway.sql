@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS aisafedb.sessions (
     mcp_session_id  TEXT NOT NULL UNIQUE,
     api_key_id      UUID NOT NULL REFERENCES aisafedb.api_keys (id),
     server_name     TEXT NOT NULL,
+    data_key        TEXT NOT NULL,
     client_name     TEXT,
     client_version  TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
