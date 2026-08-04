@@ -435,12 +435,11 @@ async def test_masking_skipped_when_hashed_in_query_flag_set() -> None:
     assert result.structured_content == {"rows": payload}
 
 
-async def test_result_guard_is_told_which_columns_were_hashed() -> None:
-    verdicts: list[ChatCompletion] = [
-        _guard_completion("allow", "narrow read"),
-        _guard_completion("allow", "digests only"),
-    ]
-    client: GuardLlmClient = GuardLlmClient(verdicts)
+async def test_result_guard_skips_llm_when_columns_were_hashed() -> None:
+    """Hashed-column protections short-circuit the result LLM guard."""
+    client: GuardLlmClient = GuardLlmClient(
+        [_guard_completion("allow", "narrow read")]
+    )
     guard: GuardService = GuardService(
         client,
         "guard-model",
@@ -471,13 +470,11 @@ async def test_result_guard_is_told_which_columns_were_hashed() -> None:
             content=[mt.TextContent(type="text", text='[{"id":1,"ip_address":"0d88"}]')]
         )
 
-    await middleware.on_call_tool(context, call_next)
+    result: ToolResult = await middleware.on_call_tool(context, call_next)
 
-    assert len(client.calls) == 2
-    result_prompt: str = client.calls[1][-1].content or ""
-    assert "Protections already applied:" in result_prompt
-    assert "ip_address" in result_prompt
-    assert "keyed SHA-256" in result_prompt
+    assert not result.is_error
+    # Call guard only; result path trusts protections without another LLM call.
+    assert len(client.calls) == 1
 
 
 async def test_data_key_with_quote_is_escaped() -> None:

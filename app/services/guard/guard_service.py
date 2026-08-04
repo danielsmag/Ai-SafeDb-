@@ -52,7 +52,10 @@ class GuardService:
     ) -> GuardVerdict:
         text: str = self._serialize(arguments or {})
         deterministic: PrefilterVerdict | None = self._sql.inspect(text)
-        if deterministic is None:
+        # Keyword PII call blocks only apply without a SQL policy. With a
+        # policy, SqlPolicyEnforcer already rejects action=block columns, and
+        # mask/drop columns are meant to reach the rewriter.
+        if deterministic is None and policy_context is None:
             deterministic = self._pii.inspect_call(text)
         if deterministic is not None:
             return self._from_prefilter(deterministic)
@@ -75,17 +78,19 @@ class GuardService:
         deterministic: PrefilterVerdict | None = self._pii.inspect_result(result_text)
         if deterministic is not None:
             return self._from_prefilter(deterministic)
+        # Gateway already hashed/dropped per policy; trust that over the LLM.
+        if protections is not None:
+            return GuardVerdict(
+                decision="allow",
+                reason="result columns already protected per policy",
+                confidence=1.0,
+            )
         policy_line: str = (
             f"\nPolicy: {policy_context}" if policy_context is not None else ""
         )
-        protections_line: str = (
-            f"\nProtections already applied: {protections}"
-            if protections is not None
-            else ""
-        )
         subject: str = (
             f"Server: {server_name}\nTool: {tool_name}"
-            f"{policy_line}{protections_line}\nResult: {result_text}"
+            f"{policy_line}\nResult: {result_text}"
         )
         return await self._classify("result", RESULT_GUARD_PROMPT, subject)
 

@@ -120,8 +120,8 @@ async def test_guard_accepts_percentage_confidence_from_model() -> None:
     assert verdict.confidence == 1.0
 
 
-async def test_guard_result_prompt_includes_applied_protections() -> None:
-    client: FakeLlmClient = FakeLlmClient([completion()])
+async def test_guard_allows_protected_result_without_calling_model() -> None:
+    client: FakeLlmClient = FakeLlmClient([])
     guard: GuardService = GuardService(client, "guard", "block", cache_ttl_seconds=0)
 
     verdict = await guard.review_result(
@@ -133,8 +133,8 @@ async def test_guard_result_prompt_includes_applied_protections() -> None:
     )
 
     assert verdict.decision == "allow"
-    subject: str = client.calls[0][-1].content or ""
-    assert "Protections already applied: column ip_address holds" in subject
+    assert "protected per policy" in verdict.reason
+    assert client.calls == []
 
 
 async def test_guard_blocks_pii_without_calling_model() -> None:
@@ -149,3 +149,43 @@ async def test_guard_blocks_pii_without_calling_model() -> None:
 
     assert verdict.decision == "block"
     assert client.calls == []
+
+
+async def test_guard_blocks_pii_call_args_without_policy() -> None:
+    client: FakeLlmClient = FakeLlmClient([])
+    guard: GuardService = GuardService(
+        client, "guard", "block", cache_ttl_seconds=60
+    )
+
+    verdict = await guard.review_call(
+        "source",
+        "query",
+        {"sql": "SELECT email, phone FROM customers LIMIT 3"},
+    )
+
+    assert verdict.decision == "block"
+    assert "sensitive personal data" in verdict.reason
+    assert client.calls == []
+
+
+async def test_guard_defers_maskable_pii_call_when_policy_present() -> None:
+    client: FakeLlmClient = FakeLlmClient([completion("allow")])
+    guard: GuardService = GuardService(
+        client, "guard", "block", cache_ttl_seconds=60
+    )
+    policy_context: str = (
+        '{"name":"pg-readonly","type":"sql","pii":[{"column":"email","action":"mask"}]}'
+    )
+
+    verdict = await guard.review_call(
+        "postgres",
+        "query",
+        {"sql": "SELECT email, phone FROM customers LIMIT 3"},
+        policy_context=policy_context,
+    )
+
+    assert verdict.decision == "allow"
+    assert len(client.calls) == 1
+    user_prompt: str = client.calls[0][-1].content or ""
+    assert "Policy:" in user_prompt
+    assert "email" in user_prompt

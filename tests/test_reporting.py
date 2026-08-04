@@ -171,12 +171,9 @@ async def test_report_summary_is_appended_to_content() -> None:
     assert "credit_card" not in payload[0]
 
 
-async def test_guard_is_told_about_dropped_columns() -> None:
-    verdicts: list[ChatCompletion] = [
-        _guard_completion("allow"),
-        _guard_completion("allow"),
-    ]
-    client: FakeLlmClient = FakeLlmClient(verdicts)
+async def test_guard_skips_result_llm_when_columns_were_dropped() -> None:
+    """Dropped-column protections short-circuit the result LLM guard."""
+    client: FakeLlmClient = FakeLlmClient([_guard_completion("allow")])
     guard: LlmGuardMiddleware = LlmGuardMiddleware(
         GuardService(client, "guard-model", "block", cache_ttl_seconds=0),
         server_name="postgres",
@@ -221,10 +218,11 @@ async def test_guard_is_told_about_dropped_columns() -> None:
 
     result: ToolResult = await reporting.on_call_tool(context, after_guard)
 
-    assert _report_of(result)["dropped_columns"] == ["credit_card"]
-    result_prompt: str = client.calls[1][-1].content or ""
-    assert "removed these columns from the query" in result_prompt
-    assert "credit_card" in result_prompt
+    report: dict[str, Any] = _report_of(result)
+    assert report["dropped_columns"] == ["credit_card"]
+    assert report["result_decision"] == "allow"
+    # Call guard only; result path trusts protections without another LLM call.
+    assert len(client.calls) == 1
 
 
 async def test_report_notes_when_nothing_was_transformed() -> None:
