@@ -14,6 +14,23 @@ access:
     - public
   tables:
     - name: public.customers
+      columns:
+        - id
+        - first_name
+        - last_name
+        - email
+        - phone
+        - date_of_birth
+        - ssn
+        - address_line1
+        - address_line2
+        - city
+        - state
+        - zip_code
+        - country
+        - credit_card
+        - ip_address
+        - created_at
       pii:
         - column: first_name
           kind: person_name
@@ -41,7 +58,7 @@ access:
           action: mask
         - column: credit_card
           kind: payment_card
-          action: block
+          action: drop
         - column: ip_address
           kind: ip_address
-          action: hash
+          action: mask

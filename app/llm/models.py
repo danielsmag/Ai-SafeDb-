@@ -2,7 +2,7 @@
 
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 type ChatRole = Literal["system", "user", "assistant", "tool"]
 type Decision = Literal["allow", "block"]
@@ -56,3 +56,15 @@ class GuardVerdict(BaseModel):
     decision: Decision
     reason: str = Field(min_length=1, max_length=500)
     confidence: float = Field(ge=0, le=1)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def normalize_percentage(cls, value: object) -> object:
+        """Accept a 0-100 scale, which local models return despite the schema."""
+        if (
+            isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and 1 < value <= 100
+        ):
+            return value / 100
+        return value

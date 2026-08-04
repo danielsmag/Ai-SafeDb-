@@ -19,14 +19,17 @@ from app.core.logging import logger
 from app.exceptions import ProxyBuildError
 from app.middleware import (
     LlmGuardMiddleware,
+    PiiHashRewriteMiddleware,
     PiiMaskingMiddleware,
     SessionAuthMiddleware,
     SqlPolicyMiddleware,
     ToolPolicyMiddleware,
+    ToolReportMiddleware,
 )
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
 from app.policies import Policy, SqlPolicy
 from app.services.guard import GuardService
+from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionStore
 
 
@@ -43,6 +46,7 @@ class ProxyFactory:
         guard_service: GuardService | None = None,
         guard_settings: GuardSettings | None = None,
         session_store: SessionStore | None = None,
+        pii_query_rewriter: PiiQueryRewriter | None = None,
     ) -> None:
         self._environ: Mapping[str, str] = (
             environ if environ is not None else os.environ
@@ -50,6 +54,7 @@ class ProxyFactory:
         self._guard_service: GuardService | None = guard_service
         self._guard_settings: GuardSettings = guard_settings or GuardSettings()
         self._session_store: SessionStore | None = session_store
+        self._pii_query_rewriter: PiiQueryRewriter | None = pii_query_rewriter
 
     def create(
         self,
@@ -67,6 +72,9 @@ class ProxyFactory:
             middleware.append(
                 SessionAuthMiddleware(self._session_store, server_name=config.name)
             )
+        # Outermost of the tool chain: it must see the final result, after the
+        # guard and the masking fallback have run.
+        middleware.append(ToolReportMiddleware(server_name=config.name))
         middleware.append(ToolPolicyMiddleware(config.tools, server_name=config.name))
         sql_policy: SqlPolicy | None = policy if isinstance(policy, SqlPolicy) else None
         if sql_policy is not None:
@@ -93,6 +101,20 @@ class ProxyFactory:
                     server_name=config.name,
                     inspect_results=inspect_results,
                     policy=sql_policy,
+                )
+            )
+        if (
+            sql_policy is not None
+            and self._pii_query_rewriter is not None
+            and self._session_store is not None
+        ):
+            middleware.append(
+                PiiHashRewriteMiddleware(
+                    self._pii_query_rewriter,
+                    sql_policy,
+                    self._session_store,
+                    server_name=config.name,
+                    on_error=self._guard_settings.on_error,
                 )
             )
         if sql_policy is not None:

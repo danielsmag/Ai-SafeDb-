@@ -22,6 +22,7 @@ class LlmSettings(BaseModel):
     base_url: str = "http://localhost:11434/v1"
     api_key: str = "not-needed"
     guard_model: str = "qwen3:4b"
+    rewrite_model: str = "qwen3:4b"
     agent_model: str = "qwen3.6:35b-a3b"
     timeout_seconds: float = Field(default=10.0, gt=0)
     max_concurrency: int = Field(default=2, ge=1)

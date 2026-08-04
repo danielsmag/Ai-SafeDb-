@@ -29,11 +29,12 @@
       "title": "AccessRules",
       "type": "object"
     },
-    "MaskAction": {
+    "PiiAction": {
       "enum": [
-        "mask",
         "block",
-        "hash"
+        "drop",
+        "mask",
+        "allow"
       ],
       "type": "string"
     },
@@ -42,7 +43,7 @@
       "description": "Sensitivity rule for one result column.",
       "properties": {
         "action": {
-          "$ref": "#/$defs/MaskAction",
+          "$ref": "#/$defs/PiiAction",
           "default": "mask"
         },
         "column": {
@@ -92,6 +93,13 @@
       "additionalProperties": false,
       "description": "Access and sensitivity rules for one SQL table.",
       "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
         "name": {
           "minLength": 1,
           "title": "Name",

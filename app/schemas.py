@@ -36,7 +36,7 @@ class ServerListResponse(BaseModel):
 
 
 class SessionDataKeyResponse(BaseModel):
-    """Per-session secret used for future keyed hashing of DB data."""
+    """Per-session secret used for keyed hashing of DB data."""
 
     session_id: UUID
     mcp_session_id: str

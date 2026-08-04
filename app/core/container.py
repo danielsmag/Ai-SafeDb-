@@ -10,6 +10,7 @@ from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
+from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionService
 
 
@@ -43,6 +44,12 @@ class ApplicationContainer(containers.DeclarativeContainer):
         on_error=settings.provided.guard.on_error,
         cache_ttl_seconds=settings.provided.guard.cache_ttl_seconds,
     )
+    pii_query_rewriter: providers.Singleton[PiiQueryRewriter] = providers.Singleton(
+        PiiQueryRewriter,
+        client=llm_client,
+        model=settings.provided.llm.rewrite_model,
+        on_error=settings.provided.guard.on_error,
+    )
     postgres_pool: providers.Singleton[PostgresPool] = providers.Singleton(
         PostgresPool,
         settings=settings.provided.database,
@@ -57,6 +64,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
         guard_service=guard_service,
         guard_settings=settings.provided.guard,
         session_store=session_service,
+        pii_query_rewriter=pii_query_rewriter,
     )
 
     gateway_application: providers.Factory[GatewayApplication] = providers.Factory(

@@ -95,6 +95,48 @@ async def test_guard_blocks_malformed_model_json_when_fail_closed() -> None:
     assert verdict.decision == "block"
 
 
+async def test_guard_accepts_percentage_confidence_from_model() -> None:
+    client = FakeLlmClient(
+        [
+            ChatCompletion(
+                message=ChatMessage(
+                    role="assistant",
+                    content=json.dumps(
+                        {
+                            "decision": "allow",
+                            "reason": "narrow read",
+                            "confidence": 100,
+                        }
+                    ),
+                )
+            )
+        ]
+    )
+    guard = GuardService(client, "guard", "block", cache_ttl_seconds=0)
+
+    verdict = await guard.review_call("source", "read", {"query": "SELECT 1 LIMIT 1"})
+
+    assert verdict.decision == "allow"
+    assert verdict.confidence == 1.0
+
+
+async def test_guard_result_prompt_includes_applied_protections() -> None:
+    client: FakeLlmClient = FakeLlmClient([completion()])
+    guard: GuardService = GuardService(client, "guard", "block", cache_ttl_seconds=0)
+
+    verdict = await guard.review_result(
+        "source",
+        "read",
+        '[{"id":1,"ip_address":"0d889721"}]',
+        None,
+        "column ip_address holds keyed SHA-256 digests",
+    )
+
+    assert verdict.decision == "allow"
+    subject: str = client.calls[0][-1].content or ""
+    assert "Protections already applied: column ip_address holds" in subject
+
+
 async def test_guard_blocks_pii_without_calling_model() -> None:
     client = FakeLlmClient([])
     guard = GuardService(client, "guard", "block", cache_ttl_seconds=60)

@@ -1,5 +1,5 @@
 .PHONY: help sync run dev test lint format typecheck check policy-schema agent \
-	up down build logs ps db clean
+	up down build rebuild logs ps db clean
 
 help:
 	@echo "Targets:"
@@ -16,6 +16,7 @@ help:
 	@echo "  up         - docker compose up --build gateway"
 	@echo "  down       - docker compose down"
 	@echo "  build      - docker compose build"
+	@echo "  rebuild    - down, build --no-cache, up --force-recreate"
 	@echo "  logs       - docker compose logs -f"
 	@echo "  ps         - docker compose ps"
 	@echo "  db         - docker compose up -d postgres"
@@ -58,6 +59,10 @@ down:
 
 build:
 	docker compose build
+
+rebuild: down
+	docker compose build --no-cache
+	docker compose up --force-recreate
 
 logs:
 	docker compose logs -f

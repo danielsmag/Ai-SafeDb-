@@ -4,7 +4,9 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-type MaskAction = Literal["mask", "block", "hash"]
+type PiiAction = Literal["block", "drop", "mask", "allow"]
+# Backward-compatible alias; prefer PiiAction.
+type MaskAction = PiiAction
 type SqlDialect = Literal[
     "bigquery",
     "clickhouse",
@@ -28,13 +30,21 @@ class PiiColumn(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     column: str = Field(min_length=1)
-    action: MaskAction = "mask"
+    action: PiiAction = "mask"
     kind: str | None = Field(default=None, min_length=1)
 
     @field_validator("column")
     @classmethod
     def normalize_column(cls, value: str) -> str:
         return value.strip().lower()
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def alias_hash_to_mask(cls, value: object) -> object:
+        """Accept legacy ``hash`` as an alias of ``mask``."""
+        if isinstance(value, str) and value.strip().lower() == "hash":
+            return "mask"
+        return value
 
 
 class TableRule(BaseModel):
@@ -43,6 +53,7 @@ class TableRule(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(min_length=1)
+    columns: list[str] = Field(default_factory=list)
     pii: list[PiiColumn] = Field(default_factory=list)
 
     @field_validator("name")
@@ -50,9 +61,17 @@ class TableRule(BaseModel):
     def normalize_name(cls, value: str) -> str:
         return value.strip().lower()
 
+    @field_validator("columns")
+    @classmethod
+    def normalize_columns(cls, values: list[str]) -> list[str]:
+        return [value.strip().lower() for value in values]
+
     def pii_rule(self, column: str) -> PiiColumn | None:
         normalized: str = column.lower()
         return next((rule for rule in self.pii if rule.column == normalized), None)
+
+    def columns_by_action(self, action: PiiAction) -> list[str]:
+        return [pii.column for pii in self.pii if pii.action == action]
 
 
 class AccessRules(BaseModel):

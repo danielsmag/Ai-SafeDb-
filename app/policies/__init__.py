@@ -4,6 +4,7 @@ from app.policies.loader import PolicyLoader
 from app.policies.models import (
     AccessRules,
     MaskAction,
+    PiiAction,
     PiiColumn,
     Policy,
     SqlDialect,
@@ -14,6 +15,7 @@ from app.policies.models import (
 __all__: list[str] = [
     "AccessRules",
     "MaskAction",
+    "PiiAction",
     "PiiColumn",
     "Policy",
     "PolicyLoader",

@@ -70,6 +70,7 @@ class GuardService:
         tool_name: str,
         result_text: str,
         policy_context: str | None = None,
+        protections: str | None = None,
     ) -> GuardVerdict:
         deterministic: PrefilterVerdict | None = self._pii.inspect_result(result_text)
         if deterministic is not None:
@@ -77,9 +78,14 @@ class GuardService:
         policy_line: str = (
             f"\nPolicy: {policy_context}" if policy_context is not None else ""
         )
+        protections_line: str = (
+            f"\nProtections already applied: {protections}"
+            if protections is not None
+            else ""
+        )
         subject: str = (
             f"Server: {server_name}\nTool: {tool_name}"
-            f"{policy_line}\nResult: {result_text}"
+            f"{policy_line}{protections_line}\nResult: {result_text}"
         )
         return await self._classify("result", RESULT_GUARD_PROMPT, subject)
 

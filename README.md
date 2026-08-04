@@ -151,6 +151,22 @@ JSON answer. Debug logs can contain SQL, tool results, PII, or secrets; use them
 only in controlled development environments. This is log-based, not
 OpenTelemetry — there's no external tracing backend to run.
 
+### Call reports
+
+Every guarded tool call comes back with a record of what the gateway did to it.
+The structured form sits in the result's `_meta` under the `aisafedb` key, and a
+one-line summary is appended as a final text block so the calling model sees it
+too:
+
+```
+aisafedb: dropped columns credit_card; hashed in query email; guard call=allow; guard result=allow
+```
+
+The `executed_sql` field holds the statement actually sent downstream with the
+session `data_key` replaced by `__DATA_KEY__`, so reports are safe to log or
+persist. See [app/reporting.py](app/reporting.py) for the full model. The report
+is assembled outside the guard, so its contents never enter the guard prompt.
+
 ### Red-team agent
 
 With the gateway and Ollama running, execute the included bounded PII
@@ -234,6 +250,7 @@ docker run -i --rm --add-host=host.docker.internal:host-gateway \
 | [app/services/config_loader.py](app/services/config_loader.py) | Folder scan, validation, `${VAR}` expansion |
 | [app/proxy_factory.py](app/proxy_factory.py) | Builds a FastMCP proxy + transport per definition |
 | [app/middleware.py](app/middleware.py) | Tool policy and LLM guard enforcement |
+| [app/reporting.py](app/reporting.py) | Per-call report of applied transforms and guard verdicts |
 | [app/connectors/llm/](app/connectors/llm/) | OpenAI-compatible local-model adapter |
 | [app/services/guard/](app/services/guard/) | Deterministic prefilters and layered guard service |
 | [app/agents/](app/agents/) | Bounded red-team agent and scenarios |
