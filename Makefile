@@ -16,7 +16,7 @@ help:
 	@echo "  up         - docker compose up --build gateway"
 	@echo "  down       - docker compose down"
 	@echo "  build      - docker compose build"
-	@echo "  rebuild    - down, build --no-cache, up --force-recreate"
+	@echo "  rebuild    - down --remove-orphans, build --no-cache, up -d --force-recreate"
 	@echo "  logs       - docker compose logs -f"
 	@echo "  ps         - docker compose ps"
 	@echo "  db         - docker compose up -d postgres"
@@ -60,9 +60,10 @@ down:
 build:
 	docker compose build
 
-rebuild: down
-	docker compose build --no-cache
-	docker compose up --force-recreate
+rebuild:
+	docker compose down --remove-orphans
+	docker compose build 
+	docker compose up -d --force-recreate --remove-orphans
 
 logs:
 	docker compose logs -f

@@ -39,3 +39,13 @@ def test_pii_prefilter_blocks_sensitive_results(text: str) -> None:
 
 def test_pii_prefilter_ignores_benign_result() -> None:
     assert PiiPrefilter().inspect_result('{"count": 3}') is None
+
+
+def test_pii_prefilter_blocks_sensitive_call_args() -> None:
+    verdict = PiiPrefilter().inspect_call(
+        '{"sql":"SELECT email, phone FROM customers LIMIT 3"}'
+    )
+
+    assert verdict is not None
+    assert verdict.decision == "block"
+    assert "sensitive personal data" in verdict.reason
