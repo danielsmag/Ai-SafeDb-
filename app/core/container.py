@@ -2,8 +2,8 @@
 
 from dependency_injector import containers, providers
 
-from app.connectors import PostgresPool
 from app.core.config import AppSettings
+from app.core.database import Database
 from app.domain.gateway_application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
 from app.policies import PolicyLoader
@@ -14,6 +14,7 @@ from app.services.guard import GuardService
 from app.services.history import PostgresHistoryStore
 from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionService
+from app.services.workflows import WorkflowLoader
 
 
 class ApplicationContainer(containers.DeclarativeContainer):
@@ -30,6 +31,12 @@ class ApplicationContainer(containers.DeclarativeContainer):
     policy_loader: providers.Factory[PolicyLoader] = providers.Factory(
         PolicyLoader,
         policies_dir=settings.provided.policies_dir,
+    )
+    workflow_loader: providers.Factory[WorkflowLoader] = providers.Factory(
+        WorkflowLoader,
+        workflows_dir=settings.provided.workflows_dir,
+        sources_dir=settings.provided.sources_dir,
+        outputs_dir=settings.provided.outputs_dir,
     )
     llm_client: providers.Singleton[OpenAICompatibleLlmClient] = providers.Singleton(
         OpenAICompatibleLlmClient,
@@ -52,23 +59,23 @@ class ApplicationContainer(containers.DeclarativeContainer):
         model=settings.provided.llm.rewrite_model,
         on_error=settings.provided.guard.on_error,
     )
-    postgres_pool: providers.Singleton[PostgresPool] = providers.Singleton(
-        PostgresPool,
+    database: providers.Singleton[Database] = providers.Singleton(
+        Database,
         settings=settings.provided.database,
     )
     session_service: providers.Singleton[SessionService] = providers.Singleton(
         SessionService,
-        pool=postgres_pool,
+        database=database,
         idle_ttl_seconds=settings.provided.session.idle_ttl_seconds,
     )
     auth_service: providers.Singleton[AuthService] = providers.Singleton(
         AuthService,
-        pool=postgres_pool,
+        database=database,
         session_ttl_seconds=settings.provided.auth.session_ttl_seconds,
     )
     history_store: providers.Singleton[PostgresHistoryStore] = providers.Singleton(
         PostgresHistoryStore,
-        pool=postgres_pool,
+        database=database,
     )
     proxy_factory: providers.Singleton[ProxyFactory] = providers.Singleton(
         ProxyFactory,
@@ -85,8 +92,9 @@ class ApplicationContainer(containers.DeclarativeContainer):
         loader=config_loader,
         policy_loader=policy_loader,
         proxy_factory=proxy_factory,
-        postgres_pool=postgres_pool,
+        database=database,
         session_store=session_service,
         auth_store=auth_service,
         history_store=history_store,
+        workflow_loader=workflow_loader,
     )

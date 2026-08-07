@@ -29,10 +29,10 @@ def test_container_applies_expected_dependency_lifetimes(tmp_path: Path) -> None
     assert container.settings() is settings
     assert container.config_loader() is not container.config_loader()
     assert container.proxy_factory() is container.proxy_factory()
-    assert container.postgres_pool() is container.postgres_pool()
+    assert container.database() is container.database()
     assert container.session_service() is container.session_service()
     assert (
-        container.postgres_pool().schema_name == settings.database.schema_name
+        container.database().schema_name == settings.database.schema_name
     )
 
 def test_bootstrap_exposes_container_on_application_state(tmp_path: Path) -> None:

@@ -1,16 +1,22 @@
-"""Session and API-key persistence against the gateway Postgres schema."""
-
-from __future__ import annotations
+"""Session and API-key persistence against ORM-managed app tables."""
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
-from psycopg import AsyncConnection, sql
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql.dml import Insert
+from sqlalchemy.engine import CursorResult, Result
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import Select
+from sqlmodel import col, select
 
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
-from app.connectors.postgres import PostgresPool
+from app.connectors.orm_models import ApiKeyORM, SessionORM
+from app.core.database import Database
 from app.core.logging import logger
 from app.services.auth import DEV_USER_ID
 from app.services.session.keys import generate_session_data_key, hash_api_key
@@ -60,141 +66,56 @@ class SessionService:
 
     def __init__(
         self,
-        pool: PostgresPool,
+        database: Database,
         idle_ttl_seconds: float = 86_400.0,
     ) -> None:
-        self._pool: PostgresPool = pool
-        self._schema: str = pool.schema_name
+        self._database: Database = database
         self._idle_ttl_seconds: float = idle_ttl_seconds
 
     async def ensure_schema(self) -> None:
-        """Create the app schema, tables, and seed the local-dev API key."""
-        schema_id: sql.Identifier = sql.Identifier(self._schema)
-        async with self._pool.connection() as conn:
-            await conn.execute(
-                sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(schema_id)
+        """Create app tables and seed the local development API key."""
+        await self._database.create_all()
+        async with self._database.session() as session:
+            statement: Insert = (
+                insert(ApiKeyORM)
+                .values(
+                    id=_DEV_KEY_ID,
+                    name=_DEV_KEY_NAME,
+                    key_prefix=_DEV_KEY_PREFIX,
+                    key_hash=_DEV_KEY_HASH,
+                    user_id=DEV_USER_ID,
+                )
+                .on_conflict_do_nothing(index_elements=[ApiKeyORM.key_hash])
             )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS {}.api_keys (
-                        id            UUID PRIMARY KEY,
-                        name          TEXT NOT NULL,
-                        key_prefix    TEXT NOT NULL,
-                        key_hash      TEXT NOT NULL UNIQUE,
-                        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        revoked_at    TIMESTAMPTZ,
-                        last_used_at  TIMESTAMPTZ,
-                        user_id       UUID REFERENCES {}.users (id)
-                    )
-                    """
-                ).format(schema_id, schema_id)
+            await session.execute(statement)
+            await session.execute(
+                update(ApiKeyORM)
+                .where(
+                    col(ApiKeyORM.id) == _DEV_KEY_ID,
+                    col(ApiKeyORM.user_id).is_(None),
+                )
+                .values(user_id=DEV_USER_ID)
             )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    ALTER TABLE {}.api_keys
-                        ADD COLUMN IF NOT EXISTS user_id UUID
-                            REFERENCES {}.users (id)
-                    """
-                ).format(schema_id, schema_id)
-            )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS {}.sessions (
-                        id              UUID PRIMARY KEY,
-                        mcp_session_id  TEXT NOT NULL UNIQUE,
-                        api_key_id      UUID NOT NULL
-                            REFERENCES {}.api_keys (id),
-                        server_name     TEXT NOT NULL,
-                        data_key        TEXT NOT NULL,
-                        client_name     TEXT,
-                        client_version  TEXT,
-                        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        closed_at       TIMESTAMPTZ
-                    )
-                    """
-                ).format(schema_id, schema_id)
-            )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    ALTER TABLE {}.sessions
-                        ADD COLUMN IF NOT EXISTS data_key TEXT
-                    """
-                ).format(schema_id)
-            )
-            await self._backfill_missing_data_keys(conn)
-            await conn.execute(
-                sql.SQL(
-                    """
-                    ALTER TABLE {}.sessions
-                        ALTER COLUMN data_key SET NOT NULL
-                    """
-                ).format(schema_id)
-            )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    CREATE INDEX IF NOT EXISTS sessions_api_key_id_idx
-                        ON {}.sessions (api_key_id)
-                    """
-                ).format(schema_id)
-            )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    INSERT INTO {}.api_keys (
-                        id, name, key_prefix, key_hash, user_id
-                    )
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT (key_hash) DO NOTHING
-                    """
-                ).format(schema_id),
-                (
-                    _DEV_KEY_ID,
-                    _DEV_KEY_NAME,
-                    _DEV_KEY_PREFIX,
-                    _DEV_KEY_HASH,
-                    DEV_USER_ID,
-                ),
-            )
-            await conn.execute(
-                sql.SQL(
-                    """
-                    UPDATE {}.api_keys
-                       SET user_id = %s
-                     WHERE id = %s
-                       AND user_id IS NULL
-                    """
-                ).format(schema_id),
-                (DEV_USER_ID, _DEV_KEY_ID),
-            )
-            await conn.commit()
-        logger.info("Ensured gateway schema %r", self._schema)
+            await session.commit()
+        logger.info("Ensured gateway schema %r", self._database.schema_name)
 
     async def authenticate(self, raw_key: str) -> ApiKey | None:
-        """Look up a non-revoked API key by the hash of the presented secret."""
+        """Look up non-revoked API key by hash of presented secret."""
         key_hash: str = hash_api_key(raw_key)
-        async with self._pool.connection() as conn:
-            row: dict[str, Any] | None = await self._fetch_api_key(conn, key_hash)
+        async with self._database.session() as session:
+            result: Result[tuple[ApiKeyORM]] = await session.execute(
+                select(ApiKeyORM).where(
+                    col(ApiKeyORM.key_hash) == key_hash,
+                    col(ApiKeyORM.revoked_at).is_(None),
+                )
+            )
+            row: ApiKeyORM | None = result.scalar_one_or_none()
             if row is None:
                 return None
-            api_key: ApiKey = self._row_to_api_key(row)
-            await conn.execute(
-                sql.SQL(
-                    """
-                    UPDATE {}.api_keys
-                       SET last_used_at = NOW()
-                     WHERE id = %s
-                    """
-                ).format(sql.Identifier(self._schema)),
-                (api_key.id,),
-            )
-            await conn.commit()
-            return api_key
+            row.last_used_at = datetime.now(UTC)
+            session.add(row)
+            await session.commit()
+        return self._to_api_key(row)
 
     async def open_session(
         self,
@@ -203,249 +124,214 @@ class SessionService:
         server_name: str,
         client_info: ClientInfo,
     ) -> SessionRecord:
-        """Insert or refresh a session row for the MCP transport session id."""
+        """Insert or refresh a session for the MCP transport session id."""
         session_id: UUID = uuid4()
         data_key: str = generate_session_data_key()
         now: datetime = datetime.now(UTC)
-        async with self._pool.connection() as conn:
-            await conn.execute(
-                sql.SQL(
-                    """
-                    INSERT INTO {}.sessions (
-                        id, mcp_session_id, api_key_id, server_name, data_key,
-                        client_name, client_version, created_at, last_seen_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (mcp_session_id) DO UPDATE SET
-                        api_key_id = EXCLUDED.api_key_id,
-                        server_name = EXCLUDED.server_name,
-                        client_name = EXCLUDED.client_name,
-                        client_version = EXCLUDED.client_version,
-                        last_seen_at = EXCLUDED.last_seen_at,
-                        closed_at = NULL
-                    """
-                ).format(sql.Identifier(self._schema)),
-                (
-                    session_id,
-                    mcp_session_id,
-                    api_key.id,
-                    server_name,
-                    data_key,
-                    client_info.name,
-                    client_info.version,
-                    now,
-                    now,
-                ),
+        async with self._database.session() as database_session:
+            statement: Insert = (
+                insert(SessionORM)
+                .values(
+                    id=session_id,
+                    mcp_session_id=mcp_session_id,
+                    api_key_id=api_key.id,
+                    server_name=server_name,
+                    data_key=data_key,
+                    client_name=client_info.name,
+                    client_version=client_info.version,
+                    created_at=now,
+                    last_seen_at=now,
+                )
+                .on_conflict_do_update(
+                    index_elements=[SessionORM.mcp_session_id],
+                    set_={
+                        "api_key_id": api_key.id,
+                        "server_name": server_name,
+                        "client_name": client_info.name,
+                        "client_version": client_info.version,
+                        "last_seen_at": now,
+                        "closed_at": None,
+                    },
+                )
             )
-            row: dict[str, Any] | None = await self._fetch_session(conn, mcp_session_id)
-            await conn.commit()
-        if row is None:
+            await database_session.execute(statement)
+            await database_session.commit()
+            pair: tuple[SessionORM, str] | None = await self._fetch_session(
+                database_session, mcp_session_id
+            )
+        if pair is None:
             raise RuntimeError(
                 f"failed to load session after open mcp_session_id={mcp_session_id!r}"
             )
-        return self._row_to_session(row)
+        return self._to_session(*pair)
 
     async def touch(self, mcp_session_id: str) -> SessionRecord | None:
-        """Refresh last_seen_at for an open session; return None if unknown/expired."""
-        async with self._pool.connection() as conn:
-            row: dict[str, Any] | None = await self._fetch_session(conn, mcp_session_id)
-            if row is None or row.get("closed_at") is not None:
-                await conn.commit()
+        """Refresh last_seen_at for open session; return None if unknown/expired."""
+        async with self._database.session() as database_session:
+            pair: tuple[SessionORM, str] | None = await self._fetch_session(
+                database_session, mcp_session_id
+            )
+            if pair is None:
                 return None
-            if self._is_idle_expired(row["last_seen_at"]):
-                await conn.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}.sessions
-                           SET closed_at = NOW()
-                         WHERE mcp_session_id = %s
-                           AND closed_at IS NULL
-                        """
-                    ).format(sql.Identifier(self._schema)),
-                    (mcp_session_id,),
-                )
-                await conn.commit()
+            row: SessionORM = pair[0]
+            key_name: str = pair[1]
+            if row.closed_at is not None:
+                return None
+            if self._is_idle_expired(row.last_seen_at):
+                row.closed_at = datetime.now(UTC)
+                database_session.add(row)
+                await database_session.commit()
                 logger.info(
                     "Closed idle MCP session mcp_session_id=%r idle_ttl_seconds=%s",
                     mcp_session_id,
                     self._idle_ttl_seconds,
                 )
                 return None
-            await conn.execute(
-                sql.SQL(
-                    """
-                    UPDATE {}.sessions
-                       SET last_seen_at = NOW()
-                     WHERE mcp_session_id = %s
-                       AND closed_at IS NULL
-                    """
-                ).format(sql.Identifier(self._schema)),
-                (mcp_session_id,),
-            )
-            refreshed: dict[str, Any] | None = await self._fetch_session(
-                conn, mcp_session_id
-            )
-            await conn.commit()
-        if refreshed is None or refreshed.get("closed_at") is not None:
-            return None
-        return self._row_to_session(refreshed)
+            row.last_seen_at = datetime.now(UTC)
+            database_session.add(row)
+            await database_session.commit()
+        return self._to_session(row, key_name)
 
     async def get_session(self, mcp_session_id: str) -> SessionRecord | None:
-        """Return an open, non-idle session without refreshing last_seen_at."""
-        async with self._pool.connection() as conn:
-            row: dict[str, Any] | None = await self._fetch_session(conn, mcp_session_id)
-            if row is None or row.get("closed_at") is not None:
-                await conn.commit()
+        """Return open, non-idle session without refreshing last_seen_at."""
+        async with self._database.session() as database_session:
+            pair: tuple[SessionORM, str] | None = await self._fetch_session(
+                database_session, mcp_session_id
+            )
+            if pair is None:
                 return None
-            if self._is_idle_expired(row["last_seen_at"]):
-                await conn.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}.sessions
-                           SET closed_at = NOW()
-                         WHERE mcp_session_id = %s
-                           AND closed_at IS NULL
-                        """
-                    ).format(sql.Identifier(self._schema)),
-                    (mcp_session_id,),
-                )
-                await conn.commit()
+            row: SessionORM = pair[0]
+            key_name: str = pair[1]
+            if row.closed_at is not None:
+                return None
+            if self._is_idle_expired(row.last_seen_at):
+                row.closed_at = datetime.now(UTC)
+                database_session.add(row)
+                await database_session.commit()
                 logger.info(
                     "Closed idle MCP session mcp_session_id=%r idle_ttl_seconds=%s",
                     mcp_session_id,
                     self._idle_ttl_seconds,
                 )
                 return None
-            await conn.commit()
-        return self._row_to_session(row)
+        return self._to_session(row, key_name)
 
     async def get_latest_open_session(
         self, api_key_id: UUID
     ) -> SessionRecord | None:
-        """Return the most recently seen open session for an API key."""
-        async with self._pool.connection() as conn:
-            result: Any = await conn.execute(
-                sql.SQL(
-                    """
-                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
-                           s.server_name, s.data_key, s.client_name, s.client_version,
-                           s.created_at, s.last_seen_at, s.closed_at
-                      FROM {}.sessions AS s
-                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
-                     WHERE s.api_key_id = %s
-                       AND s.closed_at IS NULL
-                     ORDER BY s.last_seen_at DESC
-                     LIMIT 1
-                    """
-                ).format(
-                    sql.Identifier(self._schema),
-                    sql.Identifier(self._schema),
-                ),
-                (api_key_id,),
-            )
-            row: dict[str, Any] | None = await result.fetchone()
-            if row is None:
-                await conn.commit()
-                return None
-            if self._is_idle_expired(row["last_seen_at"]):
-                await conn.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {}.sessions
-                           SET closed_at = NOW()
-                         WHERE id = %s
-                           AND closed_at IS NULL
-                        """
-                    ).format(sql.Identifier(self._schema)),
-                    (row["id"],),
+        """Return most recently seen open session for an API key."""
+        async with self._database.session() as database_session:
+            result: Result[Any] = await database_session.execute(
+                select(SessionORM, col(ApiKeyORM.name))
+                .join(
+                    ApiKeyORM,
+                    col(ApiKeyORM.id) == col(SessionORM.api_key_id),
                 )
-                await conn.commit()
+                .where(
+                    col(SessionORM.api_key_id) == api_key_id,
+                    col(SessionORM.closed_at).is_(None),
+                )
+                .order_by(col(SessionORM.last_seen_at).desc())
+                .limit(1)
+            )
+            pair: tuple[SessionORM, str] | None = cast(
+                tuple[SessionORM, str] | None,
+                result.tuples().one_or_none(),
+            )
+            if pair is None:
                 return None
-            await conn.commit()
-        return self._row_to_session(row)
+            row: SessionORM = pair[0]
+            key_name: str = pair[1]
+            if self._is_idle_expired(row.last_seen_at):
+                row.closed_at = datetime.now(UTC)
+                database_session.add(row)
+                await database_session.commit()
+                return None
+        return self._to_session(row, key_name)
 
     async def list_api_key_ids_for_user(self, user_id: UUID) -> list[UUID]:
-        """Return active and revoked API-key ids owned by a user."""
-        async with self._pool.connection() as conn:
-            result: Any = await conn.execute(
-                sql.SQL("SELECT id FROM {}.api_keys WHERE user_id = %s").format(
-                    sql.Identifier(self._schema)
-                ),
-                (user_id,),
+        """Return active and revoked API-key ids owned by user."""
+        async with self._database.session() as session:
+            result: Result[Any] = await session.execute(
+                select(col(ApiKeyORM.id)).where(col(ApiKeyORM.user_id) == user_id)
             )
-            rows: list[dict[str, Any]] = await result.fetchall()
-        return [row["id"] for row in rows]
+            ids: list[UUID] = list(result.scalars().all())
+        return ids
 
     async def list_sessions(
         self, api_key_ids: Sequence[UUID]
     ) -> list[SessionRecord]:
-        """Return sessions owned by any supplied API key, newest first."""
+        """Return sessions owned by supplied API keys, newest first."""
         if not api_key_ids:
             return []
-        async with self._pool.connection() as conn:
-            result: Any = await conn.execute(
-                sql.SQL(
-                    """
-                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
-                           s.server_name, s.data_key, s.client_name, s.client_version,
-                           s.created_at, s.last_seen_at, s.closed_at
-                      FROM {}.sessions AS s
-                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
-                     WHERE s.api_key_id = ANY(%s)
-                     ORDER BY s.last_seen_at DESC
-                    """
-                ).format(
-                    sql.Identifier(self._schema),
-                    sql.Identifier(self._schema),
-                ),
-                (list(api_key_ids),),
-            )
-            rows: list[dict[str, Any]] = await result.fetchall()
-        return [self._row_to_session(row) for row in rows]
+        return await self._list_sessions_where(
+            col(SessionORM.api_key_id).in_(list(api_key_ids))
+        )
 
     async def list_all_sessions(self) -> list[SessionRecord]:
         """Return all sessions, newest first (admin only)."""
-        async with self._pool.connection() as conn:
-            result: Any = await conn.execute(
-                sql.SQL(
-                    """
-                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
-                           s.server_name, s.data_key, s.client_name, s.client_version,
-                           s.created_at, s.last_seen_at, s.closed_at
-                      FROM {}.sessions AS s
-                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
-                     ORDER BY s.last_seen_at DESC
-                    """
-                ).format(
-                    sql.Identifier(self._schema),
-                    sql.Identifier(self._schema),
-                )
-            )
-            rows: list[dict[str, Any]] = await result.fetchall()
-        return [self._row_to_session(row) for row in rows]
+        return await self._list_sessions_where(None)
 
     async def close_session(self, mcp_session_id: str) -> bool:
-        """Mark a session closed (client DELETE / disconnect).
-
-        Returns True if a row was updated.
-        """
-        async with self._pool.connection() as conn:
-            result: Any = await conn.execute(
-                sql.SQL(
-                    """
-                    UPDATE {}.sessions
-                       SET closed_at = NOW()
-                     WHERE mcp_session_id = %s
-                       AND closed_at IS NULL
-                    """
-                ).format(sql.Identifier(self._schema)),
-                (mcp_session_id,),
+        """Mark session closed; return whether open row changed."""
+        async with self._database.session() as session:
+            result: CursorResult[object] = cast(
+                CursorResult[object],
+                await session.execute(
+                    update(SessionORM)
+                    .where(
+                        col(SessionORM.mcp_session_id) == mcp_session_id,
+                        col(SessionORM.closed_at).is_(None),
+                    )
+                    .values(closed_at=datetime.now(UTC))
+                )
             )
-            await conn.commit()
+            await session.commit()
             closed: bool = result.rowcount > 0
         if closed:
             logger.info("Closed MCP session mcp_session_id=%r", mcp_session_id)
         return closed
+
+    async def _list_sessions_where(
+        self,
+        predicate: ColumnElement[bool] | None,
+    ) -> list[SessionRecord]:
+        statement: Select[Any] = (
+            select(SessionORM, col(ApiKeyORM.name))
+            .join(
+                ApiKeyORM,
+                col(ApiKeyORM.id) == col(SessionORM.api_key_id),
+            )
+            .order_by(col(SessionORM.last_seen_at).desc())
+        )
+        if predicate is not None:
+            statement = statement.where(predicate)
+        async with self._database.session() as session:
+            result: Result[Any] = await session.execute(statement)
+            rows: list[tuple[SessionORM, str]] = cast(
+                list[tuple[SessionORM, str]],
+                list(result.tuples().all()),
+            )
+        return [self._to_session(row, key_name) for row, key_name in rows]
+
+    @staticmethod
+    async def _fetch_session(
+        database_session: AsyncSession,
+        mcp_session_id: str,
+    ) -> tuple[SessionORM, str] | None:
+        result: Result[Any] = await database_session.execute(
+            select(SessionORM, col(ApiKeyORM.name))
+            .join(
+                ApiKeyORM,
+                col(ApiKeyORM.id) == col(SessionORM.api_key_id),
+            )
+            .where(col(SessionORM.mcp_session_id) == mcp_session_id)
+        )
+        pair: tuple[SessionORM, str] | None = cast(
+            tuple[SessionORM, str] | None,
+            result.tuples().one_or_none(),
+        )
+        return pair
 
     def _is_idle_expired(self, last_seen_at: datetime) -> bool:
         if self._idle_ttl_seconds <= 0:
@@ -459,93 +345,31 @@ class SessionService:
         idle_seconds: float = (now - seen).total_seconds()
         return idle_seconds > self._idle_ttl_seconds
 
-    async def _backfill_missing_data_keys(self, conn: AsyncConnection) -> None:
-        """Mint data_key for legacy session rows created before this column."""
-        result: Any = await conn.execute(
-            sql.SQL(
-                """
-                SELECT id
-                  FROM {}.sessions
-                 WHERE data_key IS NULL
-                """
-            ).format(sql.Identifier(self._schema))
-        )
-        rows: list[dict[str, Any]] = await result.fetchall()
-        for row in rows:
-            await conn.execute(
-                sql.SQL(
-                    """
-                    UPDATE {}.sessions
-                       SET data_key = %s
-                     WHERE id = %s
-                       AND data_key IS NULL
-                    """
-                ).format(sql.Identifier(self._schema)),
-                (generate_session_data_key(), row["id"]),
-            )
-
-    async def _fetch_api_key(
-        self, conn: AsyncConnection, key_hash: str
-    ) -> dict[str, Any] | None:
-        result: Any = await conn.execute(
-            sql.SQL(
-                """
-                SELECT id, name, key_prefix, key_hash,
-                       created_at, revoked_at, last_used_at, user_id
-                  FROM {}.api_keys
-                 WHERE key_hash = %s
-                   AND revoked_at IS NULL
-                """
-            ).format(sql.Identifier(self._schema)),
-            (key_hash,),
-        )
-        row: dict[str, Any] | None = await result.fetchone()
-        return row
-
-    async def _fetch_session(
-        self, conn: AsyncConnection, mcp_session_id: str
-    ) -> dict[str, Any] | None:
-        result: Any = await conn.execute(
-            sql.SQL(
-                """
-                SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
-                       s.server_name, s.data_key, s.client_name, s.client_version,
-                       s.created_at, s.last_seen_at, s.closed_at
-                  FROM {}.sessions AS s
-                  JOIN {}.api_keys AS k ON k.id = s.api_key_id
-                 WHERE s.mcp_session_id = %s
-                """
-            ).format(sql.Identifier(self._schema), sql.Identifier(self._schema)),
-            (mcp_session_id,),
-        )
-        row: dict[str, Any] | None = await result.fetchone()
-        return row
-
     @staticmethod
-    def _row_to_api_key(row: dict[str, Any]) -> ApiKey:
+    def _to_api_key(row: ApiKeyORM) -> ApiKey:
         return ApiKey(
-            id=row["id"],
-            name=row["name"],
-            key_prefix=row["key_prefix"],
-            key_hash=row["key_hash"],
-            created_at=row["created_at"],
-            revoked_at=row["revoked_at"],
-            last_used_at=row["last_used_at"],
-            user_id=row["user_id"],
+            id=row.id,
+            name=row.name,
+            key_prefix=row.key_prefix,
+            key_hash=row.key_hash,
+            created_at=row.created_at,
+            revoked_at=row.revoked_at,
+            last_used_at=row.last_used_at,
+            user_id=row.user_id,
         )
 
     @staticmethod
-    def _row_to_session(row: dict[str, Any]) -> SessionRecord:
+    def _to_session(row: SessionORM, api_key_name: str) -> SessionRecord:
         return SessionRecord(
-            id=row["id"],
-            mcp_session_id=row["mcp_session_id"],
-            api_key_id=row["api_key_id"],
-            api_key_name=row["api_key_name"],
-            server_name=row["server_name"],
-            data_key=row["data_key"],
-            client_name=row["client_name"],
-            client_version=row["client_version"],
-            created_at=row["created_at"],
-            last_seen_at=row["last_seen_at"],
-            closed_at=row["closed_at"],
+            id=row.id,
+            mcp_session_id=row.mcp_session_id,
+            api_key_id=row.api_key_id,
+            api_key_name=api_key_name,
+            server_name=row.server_name,
+            data_key=row.data_key,
+            client_name=row.client_name,
+            client_version=row.client_version,
+            created_at=row.created_at,
+            last_seen_at=row.last_seen_at,
+            closed_at=row.closed_at,
         )

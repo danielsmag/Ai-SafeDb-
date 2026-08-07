@@ -11,16 +11,19 @@ import {
   Eye,
   EyeOff,
   FileText,
+  Globe,
   Key,
   LogOut,
   Plus,
   RefreshCw,
   Search,
+  Server,
   Settings,
   Shield,
   ShieldCheck,
   User,
   Users,
+  Workflow,
   Wrench,
   X,
 } from 'lucide-react'
@@ -33,6 +36,7 @@ import {
   adminListPolicies,
   adminListSessions,
   adminListUsers,
+  adminListWorkflows,
   adminUpdateUser,
   ApiError,
   getIdentity,
@@ -44,10 +48,14 @@ import {
   type Identity,
   type PolicySummary,
   type Session,
+  type WorkflowGraph,
+  type WorkflowNode,
+  type WorkflowNodeKind,
+  type WorkflowSummary,
 } from '../api'
 import { navigateTo } from '../routing'
 
-type TabId = 'users' | 'policies' | 'requests'
+type TabId = 'users' | 'policies' | 'connections' | 'requests'
 type SortColumn =
   | 'created_at'
   | 'server_name'
@@ -757,6 +765,410 @@ function PoliciesTab(): ReactNode {
   )
 }
 
+const DAG_NODE_W: number = 220
+const DAG_NODE_H: number = 78
+const DAG_COL_GAP: number = 96
+const DAG_ROW_GAP: number = 26
+const DAG_PAD: number = 28
+
+const DAG_KIND_ORDER: Record<WorkflowNodeKind, number> = {
+  source: 0,
+  mcp: 1,
+  policy: 2,
+  output: 3,
+}
+
+const DAG_KIND_LABEL: Record<WorkflowNodeKind, string> = {
+  source: 'Source Server',
+  mcp: 'MCP Server',
+  policy: 'Policy',
+  output: 'MCP Target',
+}
+
+function DagKindIcon({ kind }: { kind: WorkflowNodeKind }): ReactNode {
+  if (kind === 'source') return <Database size={15} />
+  if (kind === 'mcp') return <Server size={15} />
+  if (kind === 'policy') return <Shield size={15} />
+  return <Globe size={15} />
+}
+
+interface PositionedDagNode {
+  node: WorkflowNode
+  x: number
+  y: number
+}
+
+interface DagLayout {
+  positioned: PositionedDagNode[]
+  width: number
+  height: number
+}
+
+function layoutDag(graph: WorkflowGraph): DagLayout {
+  const buckets: WorkflowNode[][] = [[], [], [], []]
+  for (const node of graph.nodes) {
+    buckets[DAG_KIND_ORDER[node.kind]].push(node)
+  }
+  const columns: WorkflowNode[][] = buckets.filter((column) => column.length > 0)
+  const maxRows: number = Math.max(1, ...columns.map((column) => column.length))
+  const height: number =
+    DAG_PAD * 2 + maxRows * DAG_NODE_H + (maxRows - 1) * DAG_ROW_GAP
+  const width: number =
+    DAG_PAD * 2 +
+    Math.max(1, columns.length) * DAG_NODE_W +
+    Math.max(0, columns.length - 1) * DAG_COL_GAP
+
+  const positioned: PositionedDagNode[] = []
+  columns.forEach((column, colIndex) => {
+    const columnHeight: number =
+      column.length * DAG_NODE_H + (column.length - 1) * DAG_ROW_GAP
+    const startY: number = DAG_PAD + (height - DAG_PAD * 2 - columnHeight) / 2
+    column.forEach((node, rowIndex) => {
+      positioned.push({
+        node,
+        x: DAG_PAD + colIndex * (DAG_NODE_W + DAG_COL_GAP),
+        y: startY + rowIndex * (DAG_NODE_H + DAG_ROW_GAP),
+      })
+    })
+  })
+  return { positioned, width, height }
+}
+
+function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [showYaml, setShowYaml] = useState<boolean>(false)
+
+  useEffect(() => {
+    setShowYaml(false)
+  }, [selectedNodeId])
+
+  const layout: DagLayout = useMemo(
+    () => layoutDag(workflow.graph),
+    [workflow.graph],
+  )
+  const nodeById = useMemo(
+    () => new Map(layout.positioned.map((item) => [item.node.id, item])),
+    [layout],
+  )
+  const selectedNode: WorkflowNode | null =
+    layout.positioned.find((item) => item.node.id === selectedNodeId)?.node ?? null
+
+  return (
+    <div className="dag-card">
+      <header className="dag-header">
+        <div>
+          <p className="eyebrow">Workflow DAG</p>
+          <h3>
+            <Workflow size={17} />
+            {workflow.name}
+          </h3>
+          {workflow.description && <p>{workflow.description}</p>}
+        </div>
+        {workflow.valid ? (
+          <span className="status-badge status-ok">
+            <span /> All dependencies resolved
+          </span>
+        ) : (
+          <span className="status-badge status-error">
+            <span /> Missing dependencies
+          </span>
+        )}
+      </header>
+
+      <div className="dag-scroll">
+        <div
+          className="dag-canvas"
+          style={{ width: layout.width, height: layout.height }}
+        >
+          <svg
+            className="dag-edges"
+            width={layout.width}
+            height={layout.height}
+            viewBox={`0 0 ${layout.width} ${layout.height}`}
+          >
+            <defs>
+              <marker
+                id="dag-arrow"
+                viewBox="0 0 10 10"
+                refX="9"
+                refY="5"
+                markerWidth="7"
+                markerHeight="7"
+                orient="auto-start-reverse"
+              >
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+              </marker>
+            </defs>
+            {workflow.graph.edges.map((edge) => {
+              const from: PositionedDagNode | undefined = nodeById.get(edge.from_id)
+              const to: PositionedDagNode | undefined = nodeById.get(edge.to_id)
+              if (!from || !to) return null
+              const x1: number = from.x + DAG_NODE_W
+              const y1: number = from.y + DAG_NODE_H / 2
+              const x2: number = to.x
+              const y2: number = to.y + DAG_NODE_H / 2
+              const bend: number = (x2 - x1) / 2
+              return (
+                <path
+                  key={`${edge.from_id}->${edge.to_id}`}
+                  className="dag-edge"
+                  d={`M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`}
+                  markerEnd="url(#dag-arrow)"
+                />
+              )
+            })}
+          </svg>
+
+          {layout.positioned.map(({ node, x, y }) => (
+            <button
+              key={node.id}
+              type="button"
+              className={[
+                'dag-node',
+                `dag-node-${node.kind}`,
+                node.missing ? 'dag-node-missing' : '',
+                selectedNodeId === node.id ? 'dag-node-selected' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              style={{ left: x, top: y, width: DAG_NODE_W, height: DAG_NODE_H }}
+              onClick={() =>
+                setSelectedNodeId(selectedNodeId === node.id ? null : node.id)
+              }
+            >
+              <span className="dag-node-kind">
+                <DagKindIcon kind={node.kind} />
+                {DAG_KIND_LABEL[node.kind]}
+              </span>
+              <strong>{node.label}</strong>
+              <small>{node.missing ? 'definition not found' : node.sublabel}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {selectedNode && (
+        <div className="dag-detail">
+          <header>
+            <span className="dag-node-kind">
+              <DagKindIcon kind={selectedNode.kind} />
+              {DAG_KIND_LABEL[selectedNode.kind]}
+            </span>
+            <strong>{selectedNode.label}</strong>
+            {selectedNode.missing && (
+              <span className="status-badge status-error">
+                <span /> Missing
+              </span>
+            )}
+            <div className="dag-detail-spacer" />
+            {selectedNode.yaml && (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setShowYaml((prev) => !prev)}
+              >
+                <FileText size={14} />
+                {showYaml ? 'Hide YAML' : 'View YAML'}
+              </button>
+            )}
+          </header>
+          {Object.keys(selectedNode.details).length > 0 ? (
+            <dl>
+              {Object.entries(selectedNode.details).map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key.replaceAll('_', ' ')}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="muted">
+              No definition file found for this dependency. Add the matching YAML
+              file to fix the workflow.
+            </p>
+          )}
+          {showYaml && selectedNode.yaml && (
+            <pre className="yaml-viewer">
+              <code>{selectedNode.yaml}</code>
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ConnectionsTab(): ReactNode {
+  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
+  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [loading, setLoading] = useState<boolean>(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadWorkflows = useCallback(async (): Promise<void> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await adminListWorkflows()
+      setWorkflows(response.workflows)
+      setSelectedName(
+        (current) =>
+          current ?? (response.workflows.length ? response.workflows[0].name : null),
+      )
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error ? caught.message : 'Failed to load workflows',
+      )
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadWorkflows()
+  }, [loadWorkflows])
+
+  const selected: WorkflowSummary | null =
+    workflows.find((workflow) => workflow.name === selectedName) ?? null
+
+  return (
+    <div className="admin-tab-content">
+      <div className="tab-header">
+        <h2>
+          <Workflow size={20} /> Connections
+        </h2>
+        <button className="secondary-button" onClick={() => void loadWorkflows()}>
+          <RefreshCw size={15} className={loading ? 'spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="error-state">
+          <p>{error}</p>
+          <button onClick={() => void loadWorkflows()}>Try again</button>
+        </div>
+      )}
+
+      <div className="table-card">
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Source Server</th>
+                <th>MCP Server</th>
+                <th>Policies</th>
+                <th>MCP Target</th>
+                <th>Dependencies</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading
+                ? Array.from({ length: 3 }).map((_, index) => (
+                    <tr className="skeleton-row" key={index}>
+                      {Array.from({ length: 7 }).map((__, cell) => (
+                        <td key={cell}>
+                          <span />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
+                : workflows.map((workflow) => (
+                    <tr
+                      key={workflow.name}
+                      className={
+                        selectedName === workflow.name ? 'row-selected' : ''
+                      }
+                      onClick={() =>
+                        setSelectedName((current) =>
+                          current === workflow.name ? null : workflow.name,
+                        )
+                      }
+                    >
+                      <td>
+                        <strong>{workflow.name}</strong>
+                        {workflow.description && (
+                          <small>{workflow.description}</small>
+                        )}
+                      </td>
+                      <td>
+                        {workflow.enabled ? (
+                          <span className="status-badge status-ok">
+                            <span /> Enabled
+                          </span>
+                        ) : (
+                          <span className="status-badge status-blocked">
+                            <span /> Disabled
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="dag-chip dag-chip-source">
+                          <Database size={12} />
+                          {workflow.source}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="dag-chip dag-chip-mcp">
+                          <Server size={12} />
+                          {workflow.mcp_server}
+                        </span>
+                      </td>
+                      <td>
+                        {workflow.policies.length ? (
+                          <span className="dag-chip-stack">
+                            {workflow.policies.map((policy) => (
+                              <span className="dag-chip dag-chip-policy" key={policy}>
+                                <Shield size={12} />
+                                {policy}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="muted">None</span>
+                        )}
+                      </td>
+                      <td>
+                        <span className="dag-chip dag-chip-output">
+                          <Globe size={12} />
+                          {workflow.output}
+                        </span>
+                      </td>
+                      <td>
+                        {workflow.valid ? (
+                          <span className="status-badge status-ok">
+                            <span /> Resolved
+                          </span>
+                        ) : (
+                          <span className="status-badge status-error">
+                            <span /> Missing
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+            </tbody>
+          </table>
+        </div>
+
+        {!loading && workflows.length === 0 && (
+          <div className="empty-state">
+            <Workflow size={26} />
+            <h3>No workflows configured</h3>
+            <p>
+              Add YAML files under workflows/, sources/, and outputs/ to connect a
+              source server, its MCP server, policies, and an MCP target endpoint.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {selected && <WorkflowDag workflow={selected} />}
+    </div>
+  )
+}
+
 function timeWindowToSince(windowId: TimeWindowId): string | undefined {
   const option: TimeWindowOption | undefined = TIME_WINDOWS.find(
     (item) => item.id === windowId,
@@ -1327,6 +1739,13 @@ export function AdminPage(): ReactNode {
             Policies
           </button>
           <button
+            className={`tab-button ${activeTab === 'connections' ? 'active' : ''}`}
+            onClick={() => setActiveTab('connections')}
+          >
+            <Workflow size={16} />
+            Connections
+          </button>
+          <button
             className={`tab-button ${activeTab === 'requests' ? 'active' : ''}`}
             onClick={() => setActiveTab('requests')}
           >
@@ -1342,6 +1761,7 @@ export function AdminPage(): ReactNode {
 
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'policies' && <PoliciesTab />}
+        {activeTab === 'connections' && <ConnectionsTab />}
         {activeTab === 'requests' && <RequestsTab />}
       </div>
     </main>

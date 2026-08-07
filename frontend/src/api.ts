@@ -226,3 +226,41 @@ export function adminGetHistory(filters: AdminHistoryFilters): Promise<HistoryPa
 export function adminGetHistoryFacets(): Promise<HistoryFacets> {
   return request<HistoryFacets>('/api/admin/history/facets')
 }
+
+export type WorkflowNodeKind = 'source' | 'mcp' | 'policy' | 'output'
+
+export interface WorkflowNode {
+  id: string
+  kind: WorkflowNodeKind
+  label: string
+  sublabel: string | null
+  missing: boolean
+  details: Record<string, string>
+  yaml: string | null
+}
+
+export interface WorkflowEdge {
+  from_id: string
+  to_id: string
+}
+
+export interface WorkflowGraph {
+  nodes: WorkflowNode[]
+  edges: WorkflowEdge[]
+}
+
+export interface WorkflowSummary {
+  name: string
+  enabled: boolean
+  description: string | null
+  source: string
+  mcp_server: string
+  policies: string[]
+  output: string
+  valid: boolean
+  graph: WorkflowGraph
+}
+
+export function adminListWorkflows(): Promise<{ workflows: WorkflowSummary[] }> {
+  return request<{ workflows: WorkflowSummary[] }>('/api/admin/workflows')
+}

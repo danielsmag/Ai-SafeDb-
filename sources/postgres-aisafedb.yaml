@@ -1,0 +1,9 @@
+# Source server definition: the upstream system a workflow starts from.
+# Referenced by workflows/*.yaml via `source: postgres-aisafedb`.
+name: postgres-aisafedb
+enabled: true
+description: Primary aisafedb PostgreSQL database (Docker Compose service).
+kind: postgres
+host: ${POSTGRES_HOST:-localhost}
+port: 5432
+database: aisafedb

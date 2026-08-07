@@ -1,6 +1,7 @@
 """Public data models for the MCP gateway."""
 
 from app.models.models import (
+    SERVER_NAME_PATTERN,
     GuardOverride,
     HttpSource,
     McpServerConfig,
@@ -10,6 +11,7 @@ from app.models.models import (
 )
 
 __all__: list[str] = [
+    "SERVER_NAME_PATTERN",
     "HttpSource",
     "GuardOverride",
     "McpServerConfig",

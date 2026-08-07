@@ -29,6 +29,9 @@ RUN uv sync --frozen --no-install-project
 
 COPY app ./app
 COPY policies ./policies
+COPY workflows ./workflows
+COPY sources ./sources
+COPY outputs ./outputs
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 RUN uv sync --frozen --no-dev
 
