@@ -10,6 +10,7 @@ from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
+from app.services.history import PostgresHistoryStore
 from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionService
 
@@ -59,12 +60,17 @@ class ApplicationContainer(containers.DeclarativeContainer):
         pool=postgres_pool,
         idle_ttl_seconds=settings.provided.session.idle_ttl_seconds,
     )
+    history_store: providers.Singleton[PostgresHistoryStore] = providers.Singleton(
+        PostgresHistoryStore,
+        pool=postgres_pool,
+    )
     proxy_factory: providers.Singleton[ProxyFactory] = providers.Singleton(
         ProxyFactory,
         guard_service=guard_service,
         guard_settings=settings.provided.guard,
         session_store=session_service,
         pii_query_rewriter=pii_query_rewriter,
+        history_store=history_store,
     )
 
     gateway_application: providers.Factory[GatewayApplication] = providers.Factory(
@@ -75,4 +81,5 @@ class ApplicationContainer(containers.DeclarativeContainer):
         proxy_factory=proxy_factory,
         postgres_pool=postgres_pool,
         session_store=session_service,
+        history_store=history_store,
     )

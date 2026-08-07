@@ -42,6 +42,8 @@ class SessionStore(Protocol):
         self, api_key_id: UUID
     ) -> SessionRecord | None: ...
 
+    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]: ...
+
     async def close_session(self, mcp_session_id: str) -> bool: ...
 
 
@@ -324,6 +326,29 @@ class SessionService:
                 return None
             await conn.commit()
         return self._row_to_session(row)
+
+    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]:
+        """Return all sessions owned by an API key, newest activity first."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
+                           s.server_name, s.data_key, s.client_name, s.client_version,
+                           s.created_at, s.last_seen_at, s.closed_at
+                      FROM {}.sessions AS s
+                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
+                     WHERE s.api_key_id = %s
+                     ORDER BY s.last_seen_at DESC
+                    """
+                ).format(
+                    sql.Identifier(self._schema),
+                    sql.Identifier(self._schema),
+                ),
+                (api_key_id,),
+            )
+            rows: list[dict[str, Any]] = await result.fetchall()
+        return [self._row_to_session(row) for row in rows]
 
     async def close_session(self, mcp_session_id: str) -> bool:
         """Mark a session closed (client DELETE / disconnect).

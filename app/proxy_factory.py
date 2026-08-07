@@ -29,6 +29,7 @@ from app.middleware import (
 from app.models import HttpSource, McpServerConfig, McpSource, StdioSource
 from app.policies import Policy, SqlPolicy
 from app.services.guard import GuardService
+from app.services.history import HistoryStore
 from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionStore
 
@@ -47,6 +48,7 @@ class ProxyFactory:
         guard_settings: GuardSettings | None = None,
         session_store: SessionStore | None = None,
         pii_query_rewriter: PiiQueryRewriter | None = None,
+        history_store: HistoryStore | None = None,
     ) -> None:
         self._environ: Mapping[str, str] = (
             environ if environ is not None else os.environ
@@ -55,6 +57,7 @@ class ProxyFactory:
         self._guard_settings: GuardSettings = guard_settings or GuardSettings()
         self._session_store: SessionStore | None = session_store
         self._pii_query_rewriter: PiiQueryRewriter | None = pii_query_rewriter
+        self._history_store: HistoryStore | None = history_store
 
     def create(
         self,
@@ -74,7 +77,13 @@ class ProxyFactory:
             )
         # Outermost of the tool chain: it must see the final result, after the
         # guard and the masking fallback have run.
-        middleware.append(ToolReportMiddleware(server_name=config.name))
+        middleware.append(
+            ToolReportMiddleware(
+                server_name=config.name,
+                history_store=self._history_store,
+                session_store=self._session_store,
+            )
+        )
         middleware.append(ToolPolicyMiddleware(config.tools, server_name=config.name))
         sql_policy: SqlPolicy | None = policy if isinstance(policy, SqlPolicy) else None
         if sql_policy is not None:

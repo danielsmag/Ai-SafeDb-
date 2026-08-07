@@ -2,9 +2,12 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path as FilePath
+from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException, Path, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastmcp import FastMCP
 from fastmcp.server.http import StarletteWithLifespan
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -21,12 +24,16 @@ from app.models import McpServerConfig
 from app.policies import Policy, PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.schemas import (
+    ApiKeyIdentityResponse,
     HealthResponse,
     ServerListResponse,
     ServerSummary,
     SessionDataKeyResponse,
+    SessionListResponse,
+    SessionSummaryResponse,
 )
 from app.services.config_loader import ConfigLoader
+from app.services.history import HistoryStore, ToolCallHistory, ToolCallHistoryPage
 from app.services.session import SessionStore
 
 
@@ -41,6 +48,7 @@ class GatewayApplication:
         policy_loader: PolicyLoader | None = None,
         postgres_pool: PostgresPool | None = None,
         session_store: SessionStore | None = None,
+        history_store: HistoryStore | None = None,
     ) -> None:
         self._settings: AppSettings = settings
         self._loader: ConfigLoader = loader
@@ -48,6 +56,7 @@ class GatewayApplication:
         self._policy_loader: PolicyLoader | None = policy_loader
         self._postgres_pool: PostgresPool | None = postgres_pool
         self._session_store: SessionStore | None = session_store
+        self._history_store: HistoryStore | None = history_store
         self._policies: dict[str, Policy] = {}
 
     def build(self) -> FastAPI:
@@ -91,6 +100,15 @@ class GatewayApplication:
             api.mount(mount_path, mounted, name=f"mcp-{config.name}")
             logger.info("Exposing server %r at %s", config.name, mount_path)
 
+        frontend_dist: FilePath = FilePath("frontend/dist")
+        if frontend_dist.is_dir():
+            api.mount(
+                "/ui",
+                StaticFiles(directory=frontend_dist, html=True),
+                name="ui",
+            )
+            logger.info("Serving gateway UI from %s at /ui", frontend_dist)
+
         return api
 
     @asynccontextmanager
@@ -100,6 +118,8 @@ class GatewayApplication:
         await self._postgres_pool.open()
         try:
             await self._session_store.ensure_schema()
+            if self._history_store is not None:
+                await self._history_store.ensure_schema()
             yield
         finally:
             await self._postgres_pool.close()
@@ -127,6 +147,7 @@ class GatewayApplication:
             for config in configs
         ]
         store: SessionStore | None = self._session_store
+        history_store: HistoryStore | None = self._history_store
 
         @api.get("/health", response_model=HealthResponse, tags=["gateway"])
         async def health() -> HealthResponse:
@@ -164,6 +185,88 @@ class GatewayApplication:
                     mcp_session_id=session.mcp_session_id,
                     data_key=session.data_key,
                 )
+
+            @api.get(
+                "/api/me",
+                response_model=ApiKeyIdentityResponse,
+                tags=["ui"],
+            )
+            async def get_identity(
+                authorization: str | None = Header(default=None),
+            ) -> ApiKeyIdentityResponse:
+                api_key: ApiKey = await self._require_bearer_api_key(
+                    store, authorization
+                )
+                return ApiKeyIdentityResponse(
+                    name=api_key.name,
+                    key_prefix=api_key.key_prefix,
+                )
+
+            @api.get(
+                "/api/sessions",
+                response_model=SessionListResponse,
+                tags=["ui"],
+            )
+            async def list_sessions(
+                authorization: str | None = Header(default=None),
+            ) -> SessionListResponse:
+                api_key: ApiKey = await self._require_bearer_api_key(
+                    store, authorization
+                )
+                sessions: list[SessionRecord] = await store.list_sessions(api_key.id)
+                return SessionListResponse(
+                    sessions=[
+                        SessionSummaryResponse.from_record(session)
+                        for session in sessions
+                    ]
+                )
+
+            if history_store is not None:
+
+                @api.get(
+                    "/api/history",
+                    response_model=ToolCallHistoryPage,
+                    tags=["ui"],
+                )
+                async def list_history(
+                    authorization: str | None = Header(default=None),
+                    limit: int = Query(default=25, ge=1, le=100),
+                    offset: int = Query(default=0, ge=0),
+                    server: str | None = Query(default=None, min_length=1),
+                    session_id: UUID | None = None,
+                ) -> ToolCallHistoryPage:
+                    api_key: ApiKey = await self._require_bearer_api_key(
+                        store, authorization
+                    )
+                    return await history_store.list_calls(
+                        api_key.id,
+                        limit=limit,
+                        offset=offset,
+                        server=server,
+                        session_id=session_id,
+                    )
+
+                @api.get(
+                    "/api/history/{call_id}",
+                    response_model=ToolCallHistory,
+                    tags=["ui"],
+                )
+                async def get_history_call(
+                    call_id: UUID,
+                    authorization: str | None = Header(default=None),
+                ) -> ToolCallHistory:
+                    api_key: ApiKey = await self._require_bearer_api_key(
+                        store, authorization
+                    )
+                    entry: ToolCallHistory | None = await history_store.get_call(
+                        api_key.id, call_id
+                    )
+                    if entry is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="unknown tool call",
+                        )
+                    return entry
 
             @api.get(
                 "/sessions/{mcp_session_id}/data-key",

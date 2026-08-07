@@ -23,6 +23,7 @@ class ToolCallReport(BaseModel):
 
     server: str
     tool: str
+    original_sql: list[str] = Field(default_factory=list)
     executed_sql: list[str] = Field(default_factory=list)
     expanded_stars: bool = False
     dropped_columns: list[str] = Field(default_factory=list)

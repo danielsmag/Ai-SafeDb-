@@ -1,3 +1,12 @@
+FROM node:24-slim AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
+
 FROM python:3.14-slim
 
 # Node.js is needed by stdio server definitions that launch `npx ...`.
@@ -20,6 +29,7 @@ RUN uv sync --frozen --no-install-project
 
 COPY app ./app
 COPY policies ./policies
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"

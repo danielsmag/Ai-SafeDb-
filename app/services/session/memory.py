@@ -123,6 +123,15 @@ class MemorySessionService:
             return None
         return latest
 
+    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]:
+        sessions: list[SessionRecord] = [
+            session
+            for session in self._sessions.values()
+            if session.api_key_id == api_key_id
+        ]
+        sessions.sort(key=lambda session: session.last_seen_at, reverse=True)
+        return sessions
+
     async def close_session(self, mcp_session_id: str) -> bool:
         existing: SessionRecord | None = self._sessions.get(mcp_session_id)
         if existing is None or existing.closed_at is not None:
