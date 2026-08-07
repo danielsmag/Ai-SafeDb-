@@ -1,0 +1,7 @@
+# Output endpoint definition: the protected MCP endpoint the gateway exposes.
+# Referenced by workflows/*.yaml via `output: postgres-gateway`.
+name: postgres-gateway
+enabled: true
+description: Guarded MCP endpoint for the aisafedb PostgreSQL server.
+transport: http
+url: ${GATEWAY_PUBLIC_URL:-http://localhost:8000}/mcp/postgres

@@ -1,0 +1,18 @@
+# Workflow definition: connects a source server, its MCP server, the policies
+# applied in between, and the output endpoint into one dependency chain.
+#
+#   source server -> MCP server -> policies -> MCP target (output endpoint)
+#
+# References:
+#   source     -> sources/<name>.yaml
+#   mcp_server -> mcp-servers/<name>.yaml
+#   policies   -> policies/<name>.yaml (one or more)
+#   output     -> outputs/<name>.yaml
+name: postgres-protected
+enabled: true
+description: Guarded access path from the aisafedb database to MCP clients.
+source: postgres-aisafedb
+mcp_server: postgres
+policies:
+  - pg-readonly
+output: postgres-gateway

@@ -101,6 +101,13 @@ class DatabaseSettings(BaseModel):
             f"@{self.host}:{self.port}/{self.name}"
         )
 
+    def async_dsn(self) -> str:
+        """Build SQLAlchemy's async psycopg connection URL."""
+        return (
+            f"postgresql+psycopg://{self.user}:{self.password}"
+            f"@{self.host}:{self.port}/{self.name}"
+        )
+
 
 class AppSettings(BaseSettings):
     """Immutable settings loaded from environment variables and ``.env``."""
@@ -117,6 +124,9 @@ class AppSettings(BaseSettings):
 
     config_dir: Path = Path("mcp-servers")
     policies_dir: Path = Path("policies")
+    workflows_dir: Path = Path("workflows")
+    sources_dir: Path = Path("sources")
+    outputs_dir: Path = Path("outputs")
     mount_prefix: str = "/mcp"
     public_base_url: str = "http://localhost:8000"
     log_level: LogLevel = "INFO"

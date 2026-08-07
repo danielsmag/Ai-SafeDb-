@@ -597,3 +597,172 @@ th.sortable::after {
   cursor: pointer;
 }
 .clear-filters-button:hover { background: rgba(240, 113, 120, .12); }
+
+/* Connections tab: workflow table chips and Airflow-style DAG. */
+tr.row-selected td { background: var(--accent-soft); }
+.dag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-raised);
+  white-space: nowrap;
+}
+.dag-chip-stack { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.dag-chip-source { color: #7fd0f5; border-color: rgba(127, 208, 245, .3); }
+.dag-chip-mcp { color: #a5b0ff; border-color: rgba(124, 140, 255, .34); }
+.dag-chip-policy { color: #e9b872; border-color: rgba(233, 184, 114, .32); }
+.dag-chip-output { color: #75d9b2; border-color: rgba(68, 199, 149, .32); }
+
+.dag-card {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.dag-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.dag-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 6px;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 620;
+  letter-spacing: -.02em;
+}
+.dag-header p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+
+.dag-scroll { overflow-x: auto; }
+.dag-canvas {
+  position: relative;
+  margin: 0 auto;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, .05) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+.dag-edges { position: absolute; inset: 0; color: #4a5470; }
+.dag-edge {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+}
+
+.dag-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: var(--surface-raised);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.dag-node:hover { background: var(--surface-hover); }
+.dag-node-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 140, 255, .16);
+}
+.dag-node strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 620;
+}
+.dag-node small { color: var(--text-muted); font-size: 11px; }
+.dag-node-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--text-muted);
+}
+.dag-node-source { border-left-color: #57b8e8; }
+.dag-node-source .dag-node-kind { color: #7fd0f5; }
+.dag-node-mcp { border-left-color: var(--accent); }
+.dag-node-mcp .dag-node-kind { color: #a5b0ff; }
+.dag-node-policy { border-left-color: var(--amber); }
+.dag-node-policy .dag-node-kind { color: #e9b872; }
+.dag-node-output { border-left-color: var(--green); }
+.dag-node-output .dag-node-kind { color: #75d9b2; }
+.dag-node-missing {
+  border-color: rgba(240, 113, 120, .55);
+  border-left-color: var(--red);
+  background: rgba(240, 113, 120, .05);
+}
+.dag-node-missing .dag-node-kind, .dag-node-missing small { color: #f18b91; }
+
+.dag-detail {
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border-soft);
+}
+.dag-detail header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dag-detail header strong { color: var(--text); font-size: 14px; font-weight: 620; }
+.dag-detail dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px 22px;
+  margin: 0;
+}
+.dag-detail dl > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dag-detail dt {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.dag-detail dd {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.dag-detail-spacer { flex: 1; }
+.yaml-viewer {
+  margin: 14px 0 0;
+  padding: 16px;
+  overflow: auto;
+  max-height: 360px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: #080a0f;
+  color: #b7c0e8;
+  font: 11px/1.7 var(--mono);
+  white-space: pre;
+}

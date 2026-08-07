@@ -11,6 +11,9 @@ services:
     environment:
       GATEWAY_CONFIG_DIR: /app/mcp-servers
       GATEWAY_POLICIES_DIR: /app/policies
+      GATEWAY_WORKFLOWS_DIR: /app/workflows
+      GATEWAY_SOURCES_DIR: /app/sources
+      GATEWAY_OUTPUTS_DIR: /app/outputs
       GATEWAY_PUBLIC_BASE_URL: ${GATEWAY_PUBLIC_BASE_URL:-http://localhost:8000}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
       GATEWAY_LLM__BASE_URL: ${GATEWAY_LLM__BASE_URL:-http://host.docker.internal:11434/v1}
@@ -27,6 +30,9 @@ services:
     volumes:
       - ./mcp-servers:/app/mcp-servers:ro
       - ./policies:/app/policies:ro
+      - ./workflows:/app/workflows:ro
+      - ./sources:/app/sources:ro
+      - ./outputs:/app/outputs:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -134,3 +134,47 @@ class PolicySummary(BaseModel):
 
 class PolicyListResponse(BaseModel):
     policies: list[PolicySummary]
+
+
+class WorkflowNodeResponse(BaseModel):
+    """One box in a workflow DAG."""
+
+    id: str
+    kind: str
+    label: str
+    sublabel: str | None
+    missing: bool
+    details: dict[str, str]
+    yaml: str | None
+
+
+class WorkflowEdgeResponse(BaseModel):
+    """One dependency arrow between two workflow DAG nodes."""
+
+    from_id: str
+    to_id: str
+
+
+class WorkflowGraphResponse(BaseModel):
+    """Full DAG of a workflow, ready for rendering."""
+
+    nodes: list[WorkflowNodeResponse]
+    edges: list[WorkflowEdgeResponse]
+
+
+class WorkflowSummaryResponse(BaseModel):
+    """Workflow overview plus its resolved dependency graph."""
+
+    name: str
+    enabled: bool
+    description: str | None
+    source: str
+    mcp_server: str
+    policies: list[str]
+    output: str
+    valid: bool
+    graph: WorkflowGraphResponse
+
+
+class WorkflowListResponse(BaseModel):
+    workflows: list[WorkflowSummaryResponse]

@@ -16,9 +16,9 @@ from fastmcp.utilities.lifespan import combine_lifespans
 from starlette.types import ASGIApp, Lifespan
 
 from app import __version__
-from app.connectors import PostgresPool
 from app.connectors.models import ApiKey, SessionRecord, User, WebSession
 from app.core.config import AppSettings
+from app.core.database import Database
 from app.core.logging import logger
 from app.exceptions import GatewayError
 from app.http import wrap_with_session_terminate
@@ -40,6 +40,8 @@ from app.schemas import (
     UserIdentityResponse,
     UserListResponse,
     UserResponse,
+    WorkflowListResponse,
+    WorkflowSummaryResponse,
 )
 from app.services.auth import AuthStore
 from app.services.config_loader import ConfigLoader
@@ -50,6 +52,11 @@ from app.services.history import (
     ToolCallHistoryPage,
 )
 from app.services.session import SessionStore
+from app.services.workflows import (
+    WorkflowCatalog,
+    WorkflowLoader,
+    build_workflow_summary,
+)
 
 
 class GatewayApplication:
@@ -61,26 +68,34 @@ class GatewayApplication:
         loader: ConfigLoader,
         proxy_factory: ProxyFactory,
         policy_loader: PolicyLoader | None = None,
-        postgres_pool: PostgresPool | None = None,
+        database: Database | None = None,
         session_store: SessionStore | None = None,
         auth_store: AuthStore | None = None,
         history_store: HistoryStore | None = None,
+        workflow_loader: WorkflowLoader | None = None,
     ) -> None:
         self._settings: AppSettings = settings
         self._loader: ConfigLoader = loader
         self._proxy_factory: ProxyFactory = proxy_factory
         self._policy_loader: PolicyLoader | None = policy_loader
-        self._postgres_pool: PostgresPool | None = postgres_pool
+        self._database: Database | None = database
         self._session_store: SessionStore | None = session_store
         self._auth_store: AuthStore | None = auth_store
         self._history_store: HistoryStore | None = history_store
+        self._workflow_loader: WorkflowLoader | None = workflow_loader
         self._policies: dict[str, Policy] = {}
+        self._workflow_catalog: WorkflowCatalog = WorkflowCatalog()
 
     def build(self) -> FastAPI:
         """Build and return the configured FastAPI application."""
         configs: list[McpServerConfig] = self._loader.load()
         self._policies = (
             self._policy_loader.load() if self._policy_loader is not None else {}
+        )
+        self._workflow_catalog = (
+            self._workflow_loader.load()
+            if self._workflow_loader is not None
+            else WorkflowCatalog()
         )
         logger.info(
             "Loaded %d MCP server definition(s) from %s",
@@ -93,7 +108,7 @@ class GatewayApplication:
         }
         lifespans: list[Lifespan[FastAPI]] = []
         if (
-            self._postgres_pool is not None
+            self._database is not None
             and self._session_store is not None
             and self._auth_store is not None
         ):
@@ -134,10 +149,10 @@ class GatewayApplication:
 
     @asynccontextmanager
     async def _database_lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
-        assert self._postgres_pool is not None
+        assert self._database is not None
         assert self._session_store is not None
         assert self._auth_store is not None
-        await self._postgres_pool.open()
+        await self._database.open()
         try:
             await self._auth_store.ensure_schema()
             await self._session_store.ensure_schema()
@@ -145,7 +160,7 @@ class GatewayApplication:
                 await self._history_store.ensure_schema()
             yield
         finally:
-            await self._postgres_pool.close()
+            await self._database.close()
 
     def _build_mcp_app(self, config: McpServerConfig) -> StarletteWithLifespan:
         policy: Policy | None = (
@@ -466,6 +481,29 @@ class GatewayApplication:
                             )
                         )
                     return PolicyListResponse(policies=summaries)
+
+                @api.get(
+                    "/api/admin/workflows",
+                    response_model=WorkflowListResponse,
+                    tags=["admin"],
+                )
+                async def admin_list_workflows(
+                    request: Request,
+                ) -> WorkflowListResponse:
+                    await self._require_admin_session(auth_store, request)
+                    configs_by_name: dict[str, McpServerConfig] = {
+                        config.name: config for config in configs
+                    }
+                    workflows: list[WorkflowSummaryResponse] = [
+                        build_workflow_summary(
+                            workflow,
+                            self._workflow_catalog,
+                            configs_by_name,
+                            self._policies,
+                        )
+                        for workflow in self._workflow_catalog.workflows.values()
+                    ]
+                    return WorkflowListResponse(workflows=workflows)
 
                 @api.get(
                     "/api/admin/history",
