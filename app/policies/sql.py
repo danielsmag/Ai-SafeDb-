@@ -370,7 +370,7 @@ class SqlPolicyEnforcer:
         alias: str | None = projection.alias_or_name
         if alias:
             return alias.lower()
-        unaliased: Expression = projection.unalias()
+        unaliased: Expression = projection.unalias()  # pyright: ignore[reportAssignmentType]
         if isinstance(unaliased, exp.Column):
             return unaliased.name.lower()
         return None

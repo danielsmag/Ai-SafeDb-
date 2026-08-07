@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.connectors.models import SessionRecord
 from app.models import McpServerConfig, ToolPolicy
@@ -45,11 +45,18 @@ class SessionDataKeyResponse(BaseModel):
     data_key: str
 
 
-class ApiKeyIdentityResponse(BaseModel):
-    """Authenticated API-key identity safe for browser display."""
+class LoginRequest(BaseModel):
+    """Web-console credentials."""
 
-    name: str
-    key_prefix: str
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class UserIdentityResponse(BaseModel):
+    """Authenticated web-console identity."""
+
+    username: str
+    created_at: datetime
 
 
 class SessionSummaryResponse(BaseModel):

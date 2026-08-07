@@ -8,6 +8,7 @@ from app.domain.gateway_application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
 from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
+from app.services.auth import AuthService
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
 from app.services.history import PostgresHistoryStore
@@ -60,6 +61,11 @@ class ApplicationContainer(containers.DeclarativeContainer):
         pool=postgres_pool,
         idle_ttl_seconds=settings.provided.session.idle_ttl_seconds,
     )
+    auth_service: providers.Singleton[AuthService] = providers.Singleton(
+        AuthService,
+        pool=postgres_pool,
+        session_ttl_seconds=settings.provided.auth.session_ttl_seconds,
+    )
     history_store: providers.Singleton[PostgresHistoryStore] = providers.Singleton(
         PostgresHistoryStore,
         pool=postgres_pool,
@@ -81,5 +87,6 @@ class ApplicationContainer(containers.DeclarativeContainer):
         proxy_factory=proxy_factory,
         postgres_pool=postgres_pool,
         session_store=session_service,
+        auth_store=auth_service,
         history_store=history_store,
     )

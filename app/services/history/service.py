@@ -1,5 +1,6 @@
 """Tool-call history persistence against the gateway Postgres schema."""
 
+from collections.abc import Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -20,7 +21,7 @@ class HistoryStore(Protocol):
 
     async def list_calls(
         self,
-        api_key_id: UUID,
+        api_key_ids: Sequence[UUID],
         *,
         limit: int,
         offset: int,
@@ -29,7 +30,7 @@ class HistoryStore(Protocol):
     ) -> ToolCallHistoryPage: ...
 
     async def get_call(
-        self, api_key_id: UUID, call_id: UUID
+        self, api_key_ids: Sequence[UUID], call_id: UUID
     ) -> ToolCallHistory | None: ...
 
 
@@ -141,16 +142,18 @@ class PostgresHistoryStore:
 
     async def list_calls(
         self,
-        api_key_id: UUID,
+        api_key_ids: Sequence[UUID],
         *,
         limit: int,
         offset: int,
         server: str | None = None,
         session_id: UUID | None = None,
     ) -> ToolCallHistoryPage:
-        """Return newest matching records scoped to one API-key principal."""
-        predicates: list[sql.SQL] = [sql.SQL("api_key_id = %s")]
-        params: list[object] = [api_key_id]
+        """Return newest records scoped to the supplied API-key principals."""
+        if not api_key_ids:
+            return ToolCallHistoryPage(items=[], total=0)
+        predicates: list[sql.SQL] = [sql.SQL("api_key_id = ANY(%s)")]
+        params: list[object] = [list(api_key_ids)]
         if server is not None:
             predicates.append(sql.SQL("server_name = %s"))
             params.append(server)
@@ -187,19 +190,21 @@ class PostgresHistoryStore:
         return ToolCallHistoryPage(items=items, total=int(count_row["total"]))
 
     async def get_call(
-        self, api_key_id: UUID, call_id: UUID
+        self, api_key_ids: Sequence[UUID], call_id: UUID
     ) -> ToolCallHistory | None:
-        """Return a call only when owned by the requesting API key."""
+        """Return a call only when owned by a supplied API key."""
+        if not api_key_ids:
+            return None
         async with self._pool.connection() as conn:
             result: Any = await conn.execute(
                 sql.SQL(
                     """
                     SELECT *
                       FROM {}.tool_calls
-                     WHERE id = %s AND api_key_id = %s
+                     WHERE id = %s AND api_key_id = ANY(%s)
                     """
                 ).format(sql.Identifier(self._schema)),
-                (call_id, api_key_id),
+                (call_id, list(api_key_ids)),
             )
             row: dict[str, Any] | None = await result.fetchone()
         return ToolCallHistory.model_validate(row) if row is not None else None

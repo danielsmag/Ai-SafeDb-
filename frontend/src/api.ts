@@ -2,8 +2,8 @@ export type Decision = 'allow' | 'block' | null
 export type CallStatus = 'ok' | 'blocked' | 'error'
 
 export interface Identity {
-  name: string
-  key_prefix: string
+  username: string
+  created_at: string
 }
 
 export interface Session {
@@ -46,8 +46,6 @@ export interface HistoryPage {
   total: number
 }
 
-const API_KEY_STORAGE = 'aisafedb.apiKey'
-
 export class ApiError extends Error {
   public readonly status: number
 
@@ -60,22 +58,10 @@ export class ApiError extends Error {
   }
 }
 
-export function getApiKey(): string | null {
-  return sessionStorage.getItem(API_KEY_STORAGE)
-}
-
-export function setApiKey(value: string): void {
-  sessionStorage.setItem(API_KEY_STORAGE, value)
-}
-
-export function clearApiKey(): void {
-  sessionStorage.removeItem(API_KEY_STORAGE)
-}
-
-async function request<T>(path: string, apiKey?: string): Promise<T> {
-  const key = apiKey ?? getApiKey()
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
-    headers: key ? { Authorization: `Bearer ${key}` } : {},
+    ...init,
+    credentials: 'same-origin',
   })
   if (!response.ok) {
     let message = 'Request failed'
@@ -87,11 +73,24 @@ async function request<T>(path: string, apiKey?: string): Promise<T> {
     }
     throw new ApiError(response.status, message)
   }
+  if (response.status === 204) return undefined as T
   return (await response.json()) as T
 }
 
-export function getIdentity(apiKey?: string): Promise<Identity> {
-  return request<Identity>('/api/me', apiKey)
+export function login(username: string, password: string): Promise<Identity> {
+  return request<Identity>('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export function logout(): Promise<void> {
+  return request<void>('/api/logout', { method: 'POST' })
+}
+
+export function getIdentity(): Promise<Identity> {
+  return request<Identity>('/api/me')
 }
 
 export function getSessions(): Promise<{ sessions: Session[] }> {

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
+from app.services.auth import DEV_USER_ID
 from app.services.session.keys import (
     api_key_prefix,
     generate_session_data_key,
@@ -23,11 +25,15 @@ class MemorySessionService:
     def __init__(
         self,
         raw_keys: dict[str, str] | None = None,
+        user_ids: dict[str, UUID] | None = None,
         idle_ttl_seconds: float = 86_400.0,
     ) -> None:
         """Map raw API key plaintext -> display name. Defaults to the dev key."""
         seeds: dict[str, str] = (
             raw_keys if raw_keys is not None else {DEV_API_KEY: "local-dev"}
+        )
+        owners: dict[str, UUID] = (
+            user_ids if user_ids is not None else {DEV_API_KEY: DEV_USER_ID}
         )
         self._idle_ttl_seconds: float = idle_ttl_seconds
         self._keys: dict[str, ApiKey] = {}
@@ -41,6 +47,7 @@ class MemorySessionService:
                 key_prefix=api_key_prefix(raw_key),
                 key_hash=key_hash,
                 created_at=now,
+                user_id=owners.get(raw_key),
             )
 
     async def ensure_schema(self) -> None:
@@ -123,11 +130,17 @@ class MemorySessionService:
             return None
         return latest
 
-    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]:
+    async def list_api_key_ids_for_user(self, user_id: UUID) -> list[UUID]:
+        return [key.id for key in self._keys.values() if key.user_id == user_id]
+
+    async def list_sessions(
+        self, api_key_ids: Sequence[UUID]
+    ) -> list[SessionRecord]:
+        key_ids: set[UUID] = set(api_key_ids)
         sessions: list[SessionRecord] = [
             session
             for session in self._sessions.values()
-            if session.api_key_id == api_key_id
+            if session.api_key_id in key_ids
         ]
         sessions.sort(key=lambda session: session.last_seen_at, reverse=True)
         return sessions

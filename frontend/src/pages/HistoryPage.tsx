@@ -15,10 +15,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   ApiError,
-  clearApiKey,
   getHistory,
   getIdentity,
   getSessions,
+  logout,
   type HistoryCall,
   type Identity,
   type Session,
@@ -227,8 +227,7 @@ export function HistoryPage(): ReactNode {
   const handleError = useCallback(
     (caught: unknown): void => {
       if (caught instanceof ApiError && caught.status === 401) {
-        clearApiKey()
-        navigateTo('/login')
+        void logout().finally(() => navigateTo('/login'))
         return
       }
       setError(caught instanceof Error ? caught.message : 'Unable to load activity.')
@@ -290,9 +289,12 @@ export function HistoryPage(): ReactNode {
   const pageStart = total === 0 ? 0 : offset + 1
   const pageEnd = Math.min(offset + PAGE_SIZE, total)
 
-  function signOut(): void {
-    clearApiKey()
-    navigateTo('/login')
+  async function signOut(): Promise<void> {
+    try {
+      await logout()
+    } finally {
+      navigateTo('/login')
+    }
   }
 
   function updateServer(value: string): void {
@@ -315,10 +317,14 @@ export function HistoryPage(): ReactNode {
         </div>
         <div className="account">
           <span className="account-label">
-            <strong>{identity?.name ?? 'Loading'}</strong>
-            <small>{identity?.key_prefix ?? '••••••••'}</small>
+            <strong>{identity?.username ?? 'Loading'}</strong>
+            <small>Web console</small>
           </span>
-          <button className="icon-button" onClick={signOut} aria-label="Sign out">
+          <button
+            className="icon-button"
+            onClick={() => void signOut()}
+            aria-label="Sign out"
+          >
             <LogOut size={17} />
           </button>
         </div>

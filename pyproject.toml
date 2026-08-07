@@ -5,6 +5,7 @@ description = "FastAPI gateway that re-exposes YAML-defined MCP servers under on
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "bcrypt>=5.0.0",
     "dependency-injector>=4.49.1",
     "fastapi>=0.141.0",
     "fastmcp>=3.4.5",
