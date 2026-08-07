@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ApiError, getIdentity } from './api'
+import { ApiError, getIdentity, type Identity } from './api'
+import { AdminPage } from './pages/AdminPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { LoginPage } from './pages/LoginPage'
 import { currentRoute, navigateTo, type AppRoute } from './routing'
@@ -10,6 +11,7 @@ function App(): ReactNode {
   const [authStatus, setAuthStatus] = useState<
     'loading' | 'authenticated' | 'anonymous'
   >('loading')
+  const [identity, setIdentity] = useState<Identity | null>(null)
 
   useEffect(() => {
     const handleRoute = (): void => setRoute(currentRoute())
@@ -20,7 +22,10 @@ function App(): ReactNode {
   useEffect(() => {
     setAuthStatus('loading')
     void getIdentity()
-      .then(() => setAuthStatus('authenticated'))
+      .then((user: Identity) => {
+        setIdentity(user)
+        setAuthStatus('authenticated')
+      })
       .catch((caught: unknown) => {
         if (caught instanceof ApiError && caught.status === 401) {
           setAuthStatus('anonymous')
@@ -32,12 +37,19 @@ function App(): ReactNode {
 
   useEffect(() => {
     if (authStatus === 'loading') return
-    if (route === '/history' && authStatus === 'anonymous') navigateTo('/login')
+    const isProtected: boolean = route === '/history' || route === '/admin'
+    if (isProtected && authStatus === 'anonymous') navigateTo('/login')
     if (route === '/login' && authStatus === 'authenticated') navigateTo('/history')
-  }, [authStatus, route])
+    if (route === '/admin' && authStatus === 'authenticated' && !identity?.is_admin) {
+      navigateTo('/history')
+    }
+  }, [authStatus, route, identity])
 
   if (authStatus === 'loading') return null
-  if (route === '/history' && authStatus === 'authenticated') return <HistoryPage />
+  if (authStatus === 'authenticated') {
+    if (route === '/admin' && identity?.is_admin) return <AdminPage />
+    if (route === '/history' || route === '/admin') return <HistoryPage />
+  }
   return <LoginPage />
 }
 

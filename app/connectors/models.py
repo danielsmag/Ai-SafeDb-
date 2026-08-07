@@ -30,6 +30,7 @@ class User(BaseModel):
     id: UUID
     username: str
     password_hash: str
+    is_admin: bool = False
     created_at: datetime
     disabled_at: datetime | None = None
 

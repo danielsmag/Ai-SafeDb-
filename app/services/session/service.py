@@ -50,6 +50,8 @@ class SessionStore(Protocol):
         self, api_key_ids: Sequence[UUID]
     ) -> list[SessionRecord]: ...
 
+    async def list_all_sessions(self) -> list[SessionRecord]: ...
+
     async def close_session(self, mcp_session_id: str) -> bool: ...
 
 
@@ -397,6 +399,27 @@ class SessionService:
                     sql.Identifier(self._schema),
                 ),
                 (list(api_key_ids),),
+            )
+            rows: list[dict[str, Any]] = await result.fetchall()
+        return [self._row_to_session(row) for row in rows]
+
+    async def list_all_sessions(self) -> list[SessionRecord]:
+        """Return all sessions, newest first (admin only)."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
+                           s.server_name, s.data_key, s.client_name, s.client_version,
+                           s.created_at, s.last_seen_at, s.closed_at
+                      FROM {}.sessions AS s
+                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
+                     ORDER BY s.last_seen_at DESC
+                    """
+                ).format(
+                    sql.Identifier(self._schema),
+                    sql.Identifier(self._schema),
+                )
             )
             rows: list[dict[str, Any]] = await result.fetchall()
         return [self._row_to_session(row) for row in rows]

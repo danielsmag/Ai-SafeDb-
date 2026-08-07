@@ -7,6 +7,7 @@ import {
   LogOut,
   RefreshCw,
   Search,
+  Settings,
   ShieldCheck,
   SlidersHorizontal,
   X,
@@ -320,6 +321,16 @@ export function HistoryPage(): ReactNode {
             <strong>{identity?.username ?? 'Loading'}</strong>
             <small>Web console</small>
           </span>
+          {identity?.is_admin && (
+            <button
+              className="icon-button"
+              onClick={() => navigateTo('/admin')}
+              aria-label="Admin panel"
+              title="Admin"
+            >
+              <Settings size={17} />
+            </button>
+          )}
           <button
             className="icon-button"
             onClick={() => void signOut()}

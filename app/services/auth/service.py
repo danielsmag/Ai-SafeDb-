@@ -11,6 +11,7 @@ from app.connectors.postgres import PostgresPool
 from app.core.logging import logger
 from app.services.auth.keys import (
     generate_session_token,
+    hash_password,
     hash_session_token,
     verify_password,
 )
@@ -36,6 +37,23 @@ class AuthStore(Protocol):
 
     async def revoke_session(self, raw_token: str) -> bool: ...
 
+    async def list_users(self) -> list[User]: ...
+
+    async def get_user(self, user_id: UUID) -> User | None: ...
+
+    async def create_user(
+        self, username: str, password: str, is_admin: bool = False
+    ) -> User: ...
+
+    async def update_user(
+        self,
+        user_id: UUID,
+        *,
+        password: str | None = None,
+        is_admin: bool | None = None,
+        disabled: bool | None = None,
+    ) -> User | None: ...
+
 
 class AuthService:
     """Authenticate users and maintain server-side browser sessions."""
@@ -59,9 +77,18 @@ class AuthService:
                         id            UUID PRIMARY KEY,
                         username      TEXT NOT NULL UNIQUE,
                         password_hash TEXT NOT NULL,
+                        is_admin      BOOLEAN NOT NULL DEFAULT FALSE,
                         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         disabled_at   TIMESTAMPTZ
                     )
+                    """
+                ).format(schema_id)
+            )
+            await conn.execute(
+                sql.SQL(
+                    """
+                    ALTER TABLE {}.users
+                        ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE
                     """
                 ).format(schema_id)
             )
@@ -90,9 +117,9 @@ class AuthService:
             await conn.execute(
                 sql.SQL(
                     """
-                    INSERT INTO {}.users (id, username, password_hash)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (username) DO NOTHING
+                    INSERT INTO {}.users (id, username, password_hash, is_admin)
+                    VALUES (%s, %s, %s, TRUE)
+                    ON CONFLICT (username) DO UPDATE SET is_admin = TRUE
                     """
                 ).format(schema_id),
                 (DEV_USER_ID, DEV_USERNAME, DEV_PASSWORD_HASH),
@@ -106,7 +133,8 @@ class AuthService:
             result: Any = await conn.execute(
                 sql.SQL(
                     """
-                    SELECT id, username, password_hash, created_at, disabled_at
+                    SELECT id, username, password_hash, is_admin,
+                           created_at, disabled_at
                       FROM {}.users
                      WHERE username = %s
                        AND disabled_at IS NULL
@@ -200,7 +228,8 @@ class AuthService:
         result: Any = await conn.execute(
             sql.SQL(
                 """
-                SELECT u.id, u.username, u.password_hash, u.created_at, u.disabled_at
+                SELECT u.id, u.username, u.password_hash, u.is_admin,
+                       u.created_at, u.disabled_at
                   FROM {}.web_sessions AS s
                   JOIN {}.users AS u ON u.id = s.user_id
                  WHERE s.token_hash = %s
@@ -222,6 +251,102 @@ class AuthService:
             id=row["id"],
             username=row["username"],
             password_hash=row["password_hash"],
+            is_admin=row.get("is_admin", False),
             created_at=row["created_at"],
             disabled_at=row["disabled_at"],
         )
+
+    async def list_users(self) -> list[User]:
+        """Return all users ordered by creation date."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT id, username, password_hash, is_admin,
+                           created_at, disabled_at
+                      FROM {}.users
+                     ORDER BY created_at DESC
+                    """
+                ).format(sql.Identifier(self._schema))
+            )
+            rows: list[dict[str, Any]] = await result.fetchall()
+        return [self._row_to_user(row) for row in rows]
+
+    async def get_user(self, user_id: UUID) -> User | None:
+        """Return a user by ID."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT id, username, password_hash, is_admin,
+                           created_at, disabled_at
+                      FROM {}.users
+                     WHERE id = %s
+                    """
+                ).format(sql.Identifier(self._schema)),
+                (user_id,),
+            )
+            row: dict[str, Any] | None = await result.fetchone()
+        return self._row_to_user(row) if row else None
+
+    async def create_user(
+        self, username: str, password: str, is_admin: bool = False
+    ) -> User:
+        """Create a new user with hashed password."""
+        user_id: UUID = uuid4()
+        password_hash: str = hash_password(password)
+        now: datetime = datetime.now(UTC)
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO {}.users
+                        (id, username, password_hash, is_admin, created_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """
+                ).format(sql.Identifier(self._schema)),
+                (user_id, username, password_hash, is_admin, now),
+            )
+            await conn.commit()
+        return User(
+            id=user_id,
+            username=username,
+            password_hash=password_hash,
+            is_admin=is_admin,
+            created_at=now,
+            disabled_at=None,
+        )
+
+    async def update_user(
+        self,
+        user_id: UUID,
+        *,
+        password: str | None = None,
+        is_admin: bool | None = None,
+        disabled: bool | None = None,
+    ) -> User | None:
+        """Update user fields; returns updated user or None if not found."""
+        updates: list[sql.Composable] = []
+        params: list[object] = []
+        if password is not None:
+            updates.append(sql.SQL("password_hash = %s"))
+            params.append(hash_password(password))
+        if is_admin is not None:
+            updates.append(sql.SQL("is_admin = %s"))
+            params.append(is_admin)
+        if disabled is not None:
+            updates.append(sql.SQL("disabled_at = %s"))
+            params.append(datetime.now(UTC) if disabled else None)
+        if not updates:
+            return await self.get_user(user_id)
+        params.append(user_id)
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                sql.SQL("UPDATE {}.users SET {} WHERE id = %s").format(
+                    sql.Identifier(self._schema),
+                    sql.SQL(", ").join(updates),
+                ),
+                tuple(params),
+            )
+            await conn.commit()
+        return await self.get_user(user_id)

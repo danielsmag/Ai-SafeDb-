@@ -145,6 +145,11 @@ class MemorySessionService:
         sessions.sort(key=lambda session: session.last_seen_at, reverse=True)
         return sessions
 
+    async def list_all_sessions(self) -> list[SessionRecord]:
+        sessions: list[SessionRecord] = list(self._sessions.values())
+        sessions.sort(key=lambda session: session.last_seen_at, reverse=True)
+        return sessions
+
     async def close_session(self, mcp_session_id: str) -> bool:
         existing: SessionRecord | None = self._sessions.get(mcp_session_id)
         if existing is None or existing.closed_at is not None:
