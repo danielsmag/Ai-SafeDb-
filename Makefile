@@ -1,5 +1,5 @@
 .PHONY: help sync run dev test lint format typecheck check policy-schema agent \
-	up down build rebuild logs ps db clean
+	ui-install ui-dev ui-build up down build rebuild logs ps db clean
 
 help:
 	@echo "Targets:"
@@ -13,6 +13,9 @@ help:
 	@echo "  check      - lint + typecheck + test"
 	@echo "  policy-schema - generate policy JSON Schema"
 	@echo "  agent      - run the exfiltrate-pii red-team scenario"
+	@echo "  ui-install - install frontend dependencies"
+	@echo "  ui-dev     - run frontend dev server"
+	@echo "  ui-build   - build frontend into frontend/dist"
 	@echo "  up         - docker compose up --build gateway"
 	@echo "  down       - docker compose down"
 	@echo "  build      - docker compose build"
@@ -50,6 +53,15 @@ policy-schema:
 
 agent:
 	uv run python -m app.agents --scenario exfiltrate-pii
+
+ui-install:
+	npm --prefix frontend install
+
+ui-dev:
+	npm --prefix frontend run dev
+
+ui-build:
+	npm --prefix frontend run build
 
 up:
 	docker compose up 

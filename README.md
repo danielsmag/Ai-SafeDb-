@@ -65,6 +65,26 @@ Sessions expire after `GATEWAY_SESSION__IDLE_TTL_SECONDS` with no requests
 `mcp-session-id` (Streamable HTTP session terminate) also close the row
 immediately.
 
+### Request history UI
+
+Build the React console, then open `http://localhost:8000/ui/` and authenticate
+with the local seed key:
+
+```bash
+make ui-install
+make ui-build
+make dev
+```
+
+The console shows API-key-scoped request history, original and protected SQL,
+session metadata, PII transformations, guard decisions, status, and latency.
+For frontend development, run `make ui-dev`; Vite proxies `/api` to port 8000.
+
+Docker Compose also runs the console as a separate Nginx service at
+`http://localhost:5173` (`FRONTEND_PORT` overrides the port). Nginx proxies
+`/api` to the gateway service. The gateway-embedded build remains available at
+`http://localhost:8000/ui/`.
+
 ## Defining a server
 
 One YAML file per source server; see [mcp-servers/README.md](mcp-servers/README.md)

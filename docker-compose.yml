@@ -33,6 +33,18 @@ services:
       postgres:
         condition: service_healthy
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aisafedb-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+
   postgres-mcp:
     image: mcp/postgres
     build:

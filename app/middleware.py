@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Sequence
+from time import perf_counter
 from typing import Any, Final
 
 from fastmcp.server.dependencies import get_http_headers
@@ -33,6 +34,7 @@ from app.reporting import (
     start_report,
 )
 from app.services.guard import GuardService
+from app.services.history import HistoryStore, ToolCallHistory, ToolCallStatus
 from app.services.rewriter import DATA_KEY_PLACEHOLDER, PiiQueryRewriter
 from app.services.session import SessionStore
 
@@ -152,8 +154,15 @@ class SessionAuthMiddleware(Middleware):
 class ToolReportMiddleware(Middleware):
     """Collect what the gateway did to a call and attach it to the result."""
 
-    def __init__(self, server_name: str) -> None:
+    def __init__(
+        self,
+        server_name: str,
+        history_store: HistoryStore | None = None,
+        session_store: SessionStore | None = None,
+    ) -> None:
         self._server_name: str = server_name
+        self._history_store: HistoryStore | None = history_store
+        self._session_store: SessionStore | None = session_store
 
     async def on_call_tool(
         self,
@@ -165,7 +174,35 @@ class ToolReportMiddleware(Middleware):
             self._server_name,
             context.message.name,
         )
-        result: ToolResult = await call_next(context)
+        if report is not None:
+            report.original_sql = self._extract_original_sql(context.message.arguments)
+        started_at: float = perf_counter()
+        try:
+            result: ToolResult = await call_next(context)
+        except Exception as err:
+            status: ToolCallStatus = (
+                "blocked"
+                if isinstance(
+                    err,
+                    (ToolBlockedError, ToolGuardedError, PolicyViolationError),
+                )
+                else "error"
+            )
+            await self._persist(
+                context,
+                report,
+                status=status,
+                error=str(err),
+                duration_ms=(perf_counter() - started_at) * 1000,
+            )
+            raise
+        await self._persist(
+            context,
+            report,
+            status="ok",
+            error=None,
+            duration_ms=(perf_counter() - started_at) * 1000,
+        )
         if report is None:
             return result
         meta: dict[str, Any] = dict(result.meta or {})
@@ -177,6 +214,86 @@ class ToolReportMiddleware(Middleware):
             mt.TextContent(type="text", text=summary),
         ]
         return result.model_copy(update={"content": content, "meta": meta})
+
+    async def _persist(
+        self,
+        context: MiddlewareContext[mt.CallToolRequestParams],
+        report: ToolCallReport | None,
+        *,
+        status: ToolCallStatus,
+        error: str | None,
+        duration_ms: float,
+    ) -> None:
+        """Persist history without allowing audit failures to break tool calls."""
+        if (
+            report is None
+            or self._history_store is None
+            or self._session_store is None
+        ):
+            return
+        fastmcp_context = context.fastmcp_context
+        if fastmcp_context is None:
+            return
+        try:
+            mcp_session_id: str = fastmcp_context.session_id
+            session: SessionRecord | None = await self._session_store.get_session(
+                mcp_session_id
+            )
+            if session is None:
+                logger.warning(
+                    "Skipped tool history: session %r unavailable",
+                    mcp_session_id,
+                )
+                return
+            arguments: dict[str, Any] = self._json_safe_arguments(
+                context.message.arguments
+            )
+            entry: ToolCallHistory = ToolCallHistory(
+                session_id=session.id,
+                mcp_session_id=session.mcp_session_id,
+                api_key_id=session.api_key_id,
+                api_key_name=session.api_key_name,
+                server_name=report.server,
+                tool_name=report.tool,
+                original_arguments=arguments,
+                original_sql=report.original_sql,
+                executed_sql=report.executed_sql,
+                expanded_stars=report.expanded_stars,
+                dropped_columns=report.dropped_columns,
+                hashed_columns=report.hashed_columns,
+                masked_fields=report.masked_fields,
+                removed_fields=report.removed_fields,
+                call_decision=report.call_decision,
+                result_decision=report.result_decision,
+                status=status,
+                error=error,
+                duration_ms=duration_ms,
+            )
+            await self._history_store.record(entry)
+        except Exception as err:
+            logger.warning("Failed to persist tool history: %s", err)
+
+    @staticmethod
+    def _extract_original_sql(arguments: dict[str, Any] | None) -> list[str]:
+        if arguments is None:
+            return []
+        sql_values: list[str] = []
+        for key, value in arguments.items():
+            normalized_key: str = key.lower()
+            if (
+                isinstance(value, str)
+                and normalized_key in {"sql", "query", "statement", "sql_query"}
+            ):
+                sql_values.append(value)
+        return sql_values
+
+    @staticmethod
+    def _json_safe_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
+        if arguments is None:
+            return {}
+        serialized: str = json.dumps(arguments, default=str)
+        normalized: object = json.loads(serialized)
+        return normalized if isinstance(normalized, dict) else {}
 
 
 class ToolPolicyMiddleware(Middleware):
@@ -299,6 +416,8 @@ class PiiHashRewriteMiddleware(Middleware):
             return await call_next(context)
 
         report: ToolCallReport | None = await get_report(context)
+        if report is not None:
+            report.original_sql = list(sql_by_key.values())
         prepared_by_key: dict[str, str] = {}
         mask_by_key: dict[str, dict[str, list[str]]] = {}
         for key, sql in sql_by_key.items():
