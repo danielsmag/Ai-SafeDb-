@@ -68,7 +68,16 @@ immediately.
 ### Request history UI
 
 Build the React console, then open `http://localhost:8000/ui/` and authenticate
-with the local seed key:
+with the local development user:
+
+```text
+username: admin
+password: changeme
+```
+
+The UI exchanges these credentials at `POST /api/login` for a server-side
+session carried by an HttpOnly, `SameSite=Lax` cookie. `POST /api/logout`
+revokes that session. Change the seeded credentials before non-local use.
 
 ```bash
 make ui-install
@@ -76,8 +85,10 @@ make ui-build
 make dev
 ```
 
-The console shows API-key-scoped request history, original and protected SQL,
-session metadata, PII transformations, guard decisions, status, and latency.
+The console shows request history across API keys owned by the signed-in user,
+including original and protected SQL, session metadata, PII transformations,
+guard decisions, status, and latency. MCP clients still authenticate with
+Bearer API keys.
 For frontend development, run `make ui-dev`; Vite proxies `/api` to port 8000.
 
 Docker Compose also runs the console as a separate Nginx service at
@@ -216,6 +227,9 @@ All settings come from the environment with a `GATEWAY_` prefix (or `.env`):
 | `GATEWAY_JSON_RESPONSE` | `false` | Reply with JSON instead of SSE streams |
 | `GATEWAY_ALLOWED_HOSTS` | `[]` | Extra hostnames accepted by the MCP endpoints |
 | `GATEWAY_ALLOWED_ORIGINS` | `[]` | Extra origins accepted by the MCP endpoints |
+| `GATEWAY_AUTH__SESSION_TTL_SECONDS` | `86400` | Web-console session idle TTL |
+| `GATEWAY_AUTH__COOKIE_NAME` | `aisafedb_session` | Web-console session cookie name |
+| `GATEWAY_AUTH__COOKIE_SECURE` | `false` | Require HTTPS for the session cookie |
 
 Definitions are validated at startup: an invalid file, or a `${VAR}` with no
 value and no `${VAR:-fallback}` default, aborts the boot with the offending file

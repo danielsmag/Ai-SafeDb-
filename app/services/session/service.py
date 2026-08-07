@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -11,6 +12,7 @@ from psycopg import AsyncConnection, sql
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
 from app.connectors.postgres import PostgresPool
 from app.core.logging import logger
+from app.services.auth import DEV_USER_ID
 from app.services.session.keys import generate_session_data_key, hash_api_key
 
 _DEV_KEY_ID: UUID = UUID("00000000-0000-4000-8000-000000000001")
@@ -42,7 +44,13 @@ class SessionStore(Protocol):
         self, api_key_id: UUID
     ) -> SessionRecord | None: ...
 
-    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]: ...
+    async def list_api_key_ids_for_user(self, user_id: UUID) -> list[UUID]: ...
+
+    async def list_sessions(
+        self, api_key_ids: Sequence[UUID]
+    ) -> list[SessionRecord]: ...
+
+    async def list_all_sessions(self) -> list[SessionRecord]: ...
 
     async def close_session(self, mcp_session_id: str) -> bool: ...
 
@@ -76,10 +84,20 @@ class SessionService:
                         key_hash      TEXT NOT NULL UNIQUE,
                         created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         revoked_at    TIMESTAMPTZ,
-                        last_used_at  TIMESTAMPTZ
+                        last_used_at  TIMESTAMPTZ,
+                        user_id       UUID REFERENCES {}.users (id)
                     )
                     """
-                ).format(schema_id)
+                ).format(schema_id, schema_id)
+            )
+            await conn.execute(
+                sql.SQL(
+                    """
+                    ALTER TABLE {}.api_keys
+                        ADD COLUMN IF NOT EXISTS user_id UUID
+                            REFERENCES {}.users (id)
+                    """
+                ).format(schema_id, schema_id)
             )
             await conn.execute(
                 sql.SQL(
@@ -128,12 +146,31 @@ class SessionService:
             await conn.execute(
                 sql.SQL(
                     """
-                    INSERT INTO {}.api_keys (id, name, key_prefix, key_hash)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO {}.api_keys (
+                        id, name, key_prefix, key_hash, user_id
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (key_hash) DO NOTHING
                     """
                 ).format(schema_id),
-                (_DEV_KEY_ID, _DEV_KEY_NAME, _DEV_KEY_PREFIX, _DEV_KEY_HASH),
+                (
+                    _DEV_KEY_ID,
+                    _DEV_KEY_NAME,
+                    _DEV_KEY_PREFIX,
+                    _DEV_KEY_HASH,
+                    DEV_USER_ID,
+                ),
+            )
+            await conn.execute(
+                sql.SQL(
+                    """
+                    UPDATE {}.api_keys
+                       SET user_id = %s
+                     WHERE id = %s
+                       AND user_id IS NULL
+                    """
+                ).format(schema_id),
+                (DEV_USER_ID, _DEV_KEY_ID),
             )
             await conn.commit()
         logger.info("Ensured gateway schema %r", self._schema)
@@ -327,8 +364,24 @@ class SessionService:
             await conn.commit()
         return self._row_to_session(row)
 
-    async def list_sessions(self, api_key_id: UUID) -> list[SessionRecord]:
-        """Return all sessions owned by an API key, newest activity first."""
+    async def list_api_key_ids_for_user(self, user_id: UUID) -> list[UUID]:
+        """Return active and revoked API-key ids owned by a user."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL("SELECT id FROM {}.api_keys WHERE user_id = %s").format(
+                    sql.Identifier(self._schema)
+                ),
+                (user_id,),
+            )
+            rows: list[dict[str, Any]] = await result.fetchall()
+        return [row["id"] for row in rows]
+
+    async def list_sessions(
+        self, api_key_ids: Sequence[UUID]
+    ) -> list[SessionRecord]:
+        """Return sessions owned by any supplied API key, newest first."""
+        if not api_key_ids:
+            return []
         async with self._pool.connection() as conn:
             result: Any = await conn.execute(
                 sql.SQL(
@@ -338,14 +391,35 @@ class SessionService:
                            s.created_at, s.last_seen_at, s.closed_at
                       FROM {}.sessions AS s
                       JOIN {}.api_keys AS k ON k.id = s.api_key_id
-                     WHERE s.api_key_id = %s
+                     WHERE s.api_key_id = ANY(%s)
                      ORDER BY s.last_seen_at DESC
                     """
                 ).format(
                     sql.Identifier(self._schema),
                     sql.Identifier(self._schema),
                 ),
-                (api_key_id,),
+                (list(api_key_ids),),
+            )
+            rows: list[dict[str, Any]] = await result.fetchall()
+        return [self._row_to_session(row) for row in rows]
+
+    async def list_all_sessions(self) -> list[SessionRecord]:
+        """Return all sessions, newest first (admin only)."""
+        async with self._pool.connection() as conn:
+            result: Any = await conn.execute(
+                sql.SQL(
+                    """
+                    SELECT s.id, s.mcp_session_id, s.api_key_id, k.name AS api_key_name,
+                           s.server_name, s.data_key, s.client_name, s.client_version,
+                           s.created_at, s.last_seen_at, s.closed_at
+                      FROM {}.sessions AS s
+                      JOIN {}.api_keys AS k ON k.id = s.api_key_id
+                     ORDER BY s.last_seen_at DESC
+                    """
+                ).format(
+                    sql.Identifier(self._schema),
+                    sql.Identifier(self._schema),
+                )
             )
             rows: list[dict[str, Any]] = await result.fetchall()
         return [self._row_to_session(row) for row in rows]
@@ -417,7 +491,7 @@ class SessionService:
             sql.SQL(
                 """
                 SELECT id, name, key_prefix, key_hash,
-                       created_at, revoked_at, last_used_at
+                       created_at, revoked_at, last_used_at, user_id
                   FROM {}.api_keys
                  WHERE key_hash = %s
                    AND revoked_at IS NULL
@@ -457,6 +531,7 @@ class SessionService:
             created_at=row["created_at"],
             revoked_at=row["revoked_at"],
             last_used_at=row["last_used_at"],
+            user_id=row["user_id"],
         )
 
     @staticmethod

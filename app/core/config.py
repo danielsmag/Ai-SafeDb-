@@ -49,6 +49,16 @@ class SessionSettings(BaseModel):
     idle_ttl_seconds: float = Field(default=86_400.0, ge=0)
 
 
+class AuthSettings(BaseModel):
+    """Web-console cookie session policy."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    session_ttl_seconds: float = Field(default=86_400.0, gt=0)
+    cookie_name: str = Field(default="aisafedb_session", min_length=1)
+    cookie_secure: bool = False
+
+
 class DatabaseSettings(BaseModel):
     """Postgres connection used for gateway API keys and MCP sessions."""
 
@@ -120,6 +130,7 @@ class AppSettings(BaseSettings):
     guard: GuardSettings = Field(default_factory=GuardSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
     @field_validator("mount_prefix")
     @classmethod

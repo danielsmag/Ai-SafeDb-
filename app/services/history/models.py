@@ -19,6 +19,8 @@ class ToolCallHistory(BaseModel):
     mcp_session_id: str
     api_key_id: UUID
     api_key_name: str
+    user_id: UUID | None = None
+    username: str | None = None
     server_name: str
     tool_name: str
     original_arguments: dict[str, Any] = Field(default_factory=dict)
@@ -44,3 +46,25 @@ class ToolCallHistoryPage(BaseModel):
 
     items: list[ToolCallHistory]
     total: int = Field(ge=0)
+
+
+class ApiKeyFacet(BaseModel):
+    """Distinct API key usable as a filter option."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID
+    name: str
+
+
+class HistoryFacets(BaseModel):
+    """Distinct filterable values observed across recorded tool calls."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    servers: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    api_keys: list[ApiKeyFacet] = Field(default_factory=list)
+    statuses: list[str] = Field(
+        default_factory=lambda: ["ok", "blocked", "error"]
+    )

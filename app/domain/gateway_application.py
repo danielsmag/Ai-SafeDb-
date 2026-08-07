@@ -2,10 +2,12 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path as FilePath
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import FastAPI, Header, HTTPException, Path, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastmcp import FastMCP
@@ -15,7 +17,7 @@ from starlette.types import ASGIApp, Lifespan
 
 from app import __version__
 from app.connectors import PostgresPool
-from app.connectors.models import ApiKey, SessionRecord
+from app.connectors.models import ApiKey, SessionRecord, User, WebSession
 from app.core.config import AppSettings
 from app.core.logging import logger
 from app.exceptions import GatewayError
@@ -24,16 +26,29 @@ from app.models import McpServerConfig
 from app.policies import Policy, PolicyLoader
 from app.proxy_factory import ProxyFactory
 from app.schemas import (
-    ApiKeyIdentityResponse,
+    CreateUserRequest,
     HealthResponse,
+    LoginRequest,
+    PolicyListResponse,
+    PolicySummary,
     ServerListResponse,
     ServerSummary,
     SessionDataKeyResponse,
     SessionListResponse,
     SessionSummaryResponse,
+    UpdateUserRequest,
+    UserIdentityResponse,
+    UserListResponse,
+    UserResponse,
 )
+from app.services.auth import AuthStore
 from app.services.config_loader import ConfigLoader
-from app.services.history import HistoryStore, ToolCallHistory, ToolCallHistoryPage
+from app.services.history import (
+    HistoryFacets,
+    HistoryStore,
+    ToolCallHistory,
+    ToolCallHistoryPage,
+)
 from app.services.session import SessionStore
 
 
@@ -48,6 +63,7 @@ class GatewayApplication:
         policy_loader: PolicyLoader | None = None,
         postgres_pool: PostgresPool | None = None,
         session_store: SessionStore | None = None,
+        auth_store: AuthStore | None = None,
         history_store: HistoryStore | None = None,
     ) -> None:
         self._settings: AppSettings = settings
@@ -56,6 +72,7 @@ class GatewayApplication:
         self._policy_loader: PolicyLoader | None = policy_loader
         self._postgres_pool: PostgresPool | None = postgres_pool
         self._session_store: SessionStore | None = session_store
+        self._auth_store: AuthStore | None = auth_store
         self._history_store: HistoryStore | None = history_store
         self._policies: dict[str, Policy] = {}
 
@@ -75,7 +92,11 @@ class GatewayApplication:
             config.name: self._build_mcp_app(config) for config in configs
         }
         lifespans: list[Lifespan[FastAPI]] = []
-        if self._postgres_pool is not None and self._session_store is not None:
+        if (
+            self._postgres_pool is not None
+            and self._session_store is not None
+            and self._auth_store is not None
+        ):
             lifespans.append(self._database_lifespan)
         lifespans.extend(mcp_app.lifespan for mcp_app in mcp_apps.values())
         lifespan: Lifespan[FastAPI] | None = (
@@ -115,8 +136,10 @@ class GatewayApplication:
     async def _database_lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
         assert self._postgres_pool is not None
         assert self._session_store is not None
+        assert self._auth_store is not None
         await self._postgres_pool.open()
         try:
+            await self._auth_store.ensure_schema()
             await self._session_store.ensure_schema()
             if self._history_store is not None:
                 await self._history_store.ensure_schema()
@@ -147,6 +170,7 @@ class GatewayApplication:
             for config in configs
         ]
         store: SessionStore | None = self._session_store
+        auth_store: AuthStore | None = self._auth_store
         history_store: HistoryStore | None = self._history_store
 
         @api.get("/health", response_model=HealthResponse, tags=["gateway"])
@@ -186,20 +210,74 @@ class GatewayApplication:
                     data_key=session.data_key,
                 )
 
+            if auth_store is not None:
+
+                @api.post(
+                    "/api/login",
+                    response_model=UserIdentityResponse,
+                    tags=["ui"],
+                )
+                async def login(
+                    credentials: LoginRequest,
+                    response: Response,
+                ) -> UserIdentityResponse:
+                    user: User | None = await auth_store.authenticate(
+                        credentials.username, credentials.password
+                    )
+                    if user is None:
+                        raise HTTPException(
+                            status_code=401,
+                            detail="invalid username or password",
+                        )
+                    created_session: tuple[WebSession, str] = (
+                        await auth_store.create_session(user)
+                    )
+                    raw_token: str = created_session[1]
+                    response.set_cookie(
+                        key=self._settings.auth.cookie_name,
+                        value=raw_token,
+                        max_age=int(self._settings.auth.session_ttl_seconds),
+                        httponly=True,
+                        secure=self._settings.auth.cookie_secure,
+                        samesite="lax",
+                        path="/",
+                    )
+                    return UserIdentityResponse(
+                        username=user.username,
+                        is_admin=user.is_admin,
+                        created_at=user.created_at,
+                    )
+
+                @api.post("/api/logout", status_code=204, tags=["ui"])
+                async def logout(request: Request, response: Response) -> None:
+                    raw_token: str | None = request.cookies.get(
+                        self._settings.auth.cookie_name
+                    )
+                    if raw_token is not None:
+                        await auth_store.revoke_session(raw_token)
+                    response.delete_cookie(
+                        key=self._settings.auth.cookie_name,
+                        path="/",
+                        secure=self._settings.auth.cookie_secure,
+                        httponly=True,
+                        samesite="lax",
+                    )
+
             @api.get(
                 "/api/me",
-                response_model=ApiKeyIdentityResponse,
+                response_model=UserIdentityResponse,
                 tags=["ui"],
             )
             async def get_identity(
-                authorization: str | None = Header(default=None),
-            ) -> ApiKeyIdentityResponse:
-                api_key: ApiKey = await self._require_bearer_api_key(
-                    store, authorization
+                request: Request,
+            ) -> UserIdentityResponse:
+                user: User = await self._require_user_session(
+                    auth_store, request
                 )
-                return ApiKeyIdentityResponse(
-                    name=api_key.name,
-                    key_prefix=api_key.key_prefix,
+                return UserIdentityResponse(
+                    username=user.username,
+                    is_admin=user.is_admin,
+                    created_at=user.created_at,
                 )
 
             @api.get(
@@ -208,12 +286,15 @@ class GatewayApplication:
                 tags=["ui"],
             )
             async def list_sessions(
-                authorization: str | None = Header(default=None),
+                request: Request,
             ) -> SessionListResponse:
-                api_key: ApiKey = await self._require_bearer_api_key(
-                    store, authorization
+                user: User = await self._require_user_session(
+                    auth_store, request
                 )
-                sessions: list[SessionRecord] = await store.list_sessions(api_key.id)
+                api_key_ids: list[UUID] = await store.list_api_key_ids_for_user(
+                    user.id
+                )
+                sessions: list[SessionRecord] = await store.list_sessions(api_key_ids)
                 return SessionListResponse(
                     sessions=[
                         SessionSummaryResponse.from_record(session)
@@ -229,17 +310,20 @@ class GatewayApplication:
                     tags=["ui"],
                 )
                 async def list_history(
-                    authorization: str | None = Header(default=None),
+                    request: Request,
                     limit: int = Query(default=25, ge=1, le=100),
                     offset: int = Query(default=0, ge=0),
                     server: str | None = Query(default=None, min_length=1),
                     session_id: UUID | None = None,
                 ) -> ToolCallHistoryPage:
-                    api_key: ApiKey = await self._require_bearer_api_key(
-                        store, authorization
+                    user: User = await self._require_user_session(
+                        auth_store, request
+                    )
+                    api_key_ids: list[UUID] = (
+                        await store.list_api_key_ids_for_user(user.id)
                     )
                     return await history_store.list_calls(
-                        api_key.id,
+                        api_key_ids,
                         limit=limit,
                         offset=offset,
                         server=server,
@@ -253,13 +337,16 @@ class GatewayApplication:
                 )
                 async def get_history_call(
                     call_id: UUID,
-                    authorization: str | None = Header(default=None),
+                    request: Request,
                 ) -> ToolCallHistory:
-                    api_key: ApiKey = await self._require_bearer_api_key(
-                        store, authorization
+                    user: User = await self._require_user_session(
+                        auth_store, request
+                    )
+                    api_key_ids: list[UUID] = (
+                        await store.list_api_key_ids_for_user(user.id)
                     )
                     entry: ToolCallHistory | None = await history_store.get_call(
-                        api_key.id, call_id
+                        api_key_ids, call_id
                     )
                     if entry is None:
                         raise HTTPException(
@@ -267,6 +354,202 @@ class GatewayApplication:
                             detail="unknown tool call",
                         )
                     return entry
+
+                @api.get(
+                    "/api/admin/users",
+                    response_model=UserListResponse,
+                    tags=["admin"],
+                )
+                async def admin_list_users(
+                    request: Request,
+                ) -> UserListResponse:
+                    await self._require_admin_session(auth_store, request)
+                    users: list[User] = await auth_store.list_users()
+                    return UserListResponse(
+                        users=[
+                            UserResponse(
+                                id=u.id,
+                                username=u.username,
+                                is_admin=u.is_admin,
+                                created_at=u.created_at,
+                                disabled_at=u.disabled_at,
+                            )
+                            for u in users
+                        ]
+                    )
+
+                @api.post(
+                    "/api/admin/users",
+                    response_model=UserResponse,
+                    status_code=201,
+                    tags=["admin"],
+                )
+                async def admin_create_user(
+                    payload: CreateUserRequest,
+                    request: Request,
+                ) -> UserResponse:
+                    await self._require_admin_session(auth_store, request)
+                    try:
+                        user: User = await auth_store.create_user(
+                            payload.username,
+                            payload.password,
+                            payload.is_admin,
+                        )
+                    except Exception as err:
+                        if "unique" in str(err).lower():
+                            raise HTTPException(
+                                status_code=409,
+                                detail="username already exists",
+                            ) from err
+                        raise
+                    return UserResponse(
+                        id=user.id,
+                        username=user.username,
+                        is_admin=user.is_admin,
+                        created_at=user.created_at,
+                        disabled_at=user.disabled_at,
+                    )
+
+                @api.patch(
+                    "/api/admin/users/{user_id}",
+                    response_model=UserResponse,
+                    tags=["admin"],
+                )
+                async def admin_update_user(
+                    user_id: UUID,
+                    payload: UpdateUserRequest,
+                    request: Request,
+                ) -> UserResponse:
+                    await self._require_admin_session(auth_store, request)
+                    user: User | None = await auth_store.update_user(
+                        user_id,
+                        password=payload.password,
+                        is_admin=payload.is_admin,
+                        disabled=payload.disabled,
+                    )
+                    if user is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="user not found",
+                        )
+                    return UserResponse(
+                        id=user.id,
+                        username=user.username,
+                        is_admin=user.is_admin,
+                        created_at=user.created_at,
+                        disabled_at=user.disabled_at,
+                    )
+
+                @api.get(
+                    "/api/admin/policies",
+                    response_model=PolicyListResponse,
+                    tags=["admin"],
+                )
+                async def admin_list_policies(
+                    request: Request,
+                ) -> PolicyListResponse:
+                    await self._require_admin_session(auth_store, request)
+                    summaries: list[PolicySummary] = []
+                    for policy in self._policies.values():
+                        pii_count: int = sum(
+                            len(table.pii) for table in policy.access.tables
+                        )
+                        summaries.append(
+                            PolicySummary(
+                                name=policy.name,
+                                type=policy.type,
+                                dialect=policy.dialect,
+                                read_only=policy.read_only,
+                                denied_keywords=policy.denied_keywords,
+                                tables_count=len(policy.access.tables),
+                                pii_rules_count=pii_count,
+                            )
+                        )
+                    return PolicyListResponse(policies=summaries)
+
+                @api.get(
+                    "/api/admin/history",
+                    response_model=ToolCallHistoryPage,
+                    tags=["admin"],
+                )
+                async def admin_list_history(
+                    request: Request,
+                    limit: int = Query(default=25, ge=1, le=100),
+                    offset: int = Query(default=0, ge=0),
+                    server: str | None = Query(default=None, min_length=1),
+                    session_id: UUID | None = None,
+                    user_id: UUID | None = None,
+                    tool_name: Annotated[list[str] | None, Query()] = None,
+                    status: Annotated[list[str] | None, Query()] = None,
+                    api_key_id: Annotated[list[UUID] | None, Query()] = None,
+                    since: Annotated[datetime | None, Query()] = None,
+                    until: Annotated[datetime | None, Query()] = None,
+                    sort_by: str | None = Query(default=None),
+                    sort_order: str | None = Query(default=None),
+                ) -> ToolCallHistoryPage:
+                    await self._require_admin_session(auth_store, request)
+                    return await history_store.list_all_calls(
+                        limit=limit,
+                        offset=offset,
+                        server=server,
+                        session_id=session_id,
+                        user_id=user_id,
+                        tool_names=tool_name,
+                        statuses=status,
+                        api_key_ids=api_key_id,
+                        since=since,
+                        until=until,
+                        sort_by=sort_by,
+                        sort_order=sort_order,
+                    )
+
+                @api.get(
+                    "/api/admin/history/facets",
+                    response_model=HistoryFacets,
+                    tags=["admin"],
+                )
+                async def admin_history_facets(
+                    request: Request,
+                ) -> HistoryFacets:
+                    await self._require_admin_session(auth_store, request)
+                    return await history_store.list_facets()
+
+                @api.get(
+                    "/api/admin/history/{call_id}",
+                    response_model=ToolCallHistory,
+                    tags=["admin"],
+                )
+                async def admin_get_history_call(
+                    call_id: UUID,
+                    request: Request,
+                ) -> ToolCallHistory:
+                    await self._require_admin_session(auth_store, request)
+                    entry: ToolCallHistory | None = (
+                        await history_store.get_call_admin(call_id)
+                    )
+                    if entry is None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail="unknown tool call",
+                        )
+                    return entry
+
+                @api.get(
+                    "/api/admin/sessions",
+                    response_model=SessionListResponse,
+                    tags=["admin"],
+                )
+                async def admin_list_sessions(
+                    request: Request,
+                ) -> SessionListResponse:
+                    await self._require_admin_session(auth_store, request)
+                    sessions: list[SessionRecord] = await store.list_all_sessions()
+                    return SessionListResponse(
+                        sessions=[
+                            SessionSummaryResponse.from_record(session)
+                            for session in sessions
+                        ]
+                    )
 
             @api.get(
                 "/sessions/{mcp_session_id}/data-key",
@@ -296,6 +579,42 @@ class GatewayApplication:
                     mcp_session_id=session.mcp_session_id,
                     data_key=session.data_key,
                 )
+
+    async def _require_user_session(
+        self,
+        auth_store: AuthStore | None,
+        request: Request,
+    ) -> User:
+        if auth_store is None:
+            raise HTTPException(
+                status_code=503,
+                detail="web authentication unavailable",
+            )
+        raw_token: str | None = request.cookies.get(
+            self._settings.auth.cookie_name
+        )
+        if raw_token is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        user: User | None = await auth_store.resolve_session(raw_token)
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="session is invalid or expired",
+            )
+        return user
+
+    async def _require_admin_session(
+        self,
+        auth_store: AuthStore | None,
+        request: Request,
+    ) -> User:
+        user: User = await self._require_user_session(auth_store, request)
+        if not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="administrator access required",
+            )
+        return user
 
     async def _require_bearer_api_key(
         self,

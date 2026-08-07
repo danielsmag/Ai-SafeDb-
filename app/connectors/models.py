@@ -19,6 +19,33 @@ class ApiKey(BaseModel):
     created_at: datetime
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
+    user_id: UUID | None = None
+
+
+class User(BaseModel):
+    """Web-console user authenticated with username and password."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID
+    username: str
+    password_hash: str
+    is_admin: bool = False
+    created_at: datetime
+    disabled_at: datetime | None = None
+
+
+class WebSession(BaseModel):
+    """Server-side browser session; only token hash is persisted."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    id: UUID
+    token_hash: str
+    user_id: UUID
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: datetime
 
 
 class ClientInfo(BaseModel):

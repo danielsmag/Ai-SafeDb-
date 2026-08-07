@@ -17,6 +17,7 @@ from app.domain.gateway_application import GatewayApplication
 from app.exceptions import ToolBlockedError
 from app.middleware import ToolReportMiddleware
 from app.proxy_factory import ProxyFactory
+from app.services.auth import DEV_PASSWORD, DEV_USERNAME, MemoryAuthService
 from app.services.config_loader import ConfigLoader
 from app.services.history import MemoryHistoryStore, ToolCallHistory
 from app.services.session import DEV_API_KEY, MemorySessionService
@@ -85,12 +86,12 @@ async def test_memory_history_filters_and_scopes_by_api_key() -> None:
     await history.record(first)
     await history.record(second)
 
-    page = await history.list_calls(first_key, limit=25, offset=0)
+    page = await history.list_calls([first_key], limit=25, offset=0)
 
     assert page.total == 1
     assert page.items == [first]
-    assert await history.get_call(first_key, first.id) == first
-    assert await history.get_call(second_key, first.id) is None
+    assert await history.get_call([first_key], first.id) == first
+    assert await history.get_call([second_key], first.id) is None
 
 
 async def test_report_middleware_persists_success_and_blocked_calls() -> None:
@@ -120,7 +121,7 @@ async def test_report_middleware_persists_success_and_blocked_calls() -> None:
 
     await middleware.on_call_tool(context, success)
     success_page = await history.list_calls(
-        session.api_key_id, limit=25, offset=0
+        [session.api_key_id], limit=25, offset=0
     )
     assert success_page.items[0].status == "ok"
     assert success_page.items[0].original_sql == [
@@ -137,7 +138,7 @@ async def test_report_middleware_persists_success_and_blocked_calls() -> None:
         await middleware.on_call_tool(context, blocked)
 
     blocked_page = await history.list_calls(
-        session.api_key_id, limit=25, offset=0
+        [session.api_key_id], limit=25, offset=0
     )
     assert blocked_page.total == 2
     assert blocked_page.items[0].status == "blocked"
@@ -154,6 +155,7 @@ async def test_history_api_authentication_and_owner_scoping(tmp_path: Path) -> N
         sessions, OTHER_API_KEY, "mcp-other"
     )
     history: MemoryHistoryStore = MemoryHistoryStore()
+    auth: MemoryAuthService = MemoryAuthService()
     own_entry: ToolCallHistory = history_entry(own_session)
     other_entry: ToolCallHistory = history_entry(other_session, tool_name="other_query")
     await history.record(own_entry)
@@ -170,6 +172,7 @@ async def test_history_api_authentication_and_owner_scoping(tmp_path: Path) -> N
             history_store=history,
         ),
         session_store=sessions,
+        auth_store=auth,
         history_store=history,
     ).build()
 
@@ -177,30 +180,20 @@ async def test_history_api_authentication_and_owner_scoping(tmp_path: Path) -> N
         transport=httpx.ASGITransport(app=app),
         base_url="http://gateway.test",
     ) as client:
-        identity: httpx.Response = await client.get(
-            "/api/me",
-            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
-        )
-        page: httpx.Response = await client.get(
-            "/api/history",
-            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
-        )
-        detail: httpx.Response = await client.get(
-            f"/api/history/{own_entry.id}",
-            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
-        )
-        hidden: httpx.Response = await client.get(
-            f"/api/history/{other_entry.id}",
-            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
-        )
-        session_page: httpx.Response = await client.get(
-            "/api/sessions",
-            headers={"Authorization": f"Bearer {DEV_API_KEY}"},
-        )
         unauthorized: httpx.Response = await client.get("/api/history")
+        login: httpx.Response = await client.post(
+            "/api/login",
+            json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
+        )
+        identity: httpx.Response = await client.get("/api/me")
+        page: httpx.Response = await client.get("/api/history")
+        detail: httpx.Response = await client.get(f"/api/history/{own_entry.id}")
+        hidden: httpx.Response = await client.get(f"/api/history/{other_entry.id}")
+        session_page: httpx.Response = await client.get("/api/sessions")
 
     payload: dict[str, Any] = page.json()
-    assert identity.json() == {"name": "local-dev", "key_prefix": "aisk_dev"}
+    assert login.status_code == 200
+    assert identity.json()["username"] == DEV_USERNAME
     assert page.status_code == 200
     assert payload["total"] == 1
     assert payload["items"][0]["id"] == str(own_entry.id)

@@ -1,32 +1,39 @@
 import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { ArrowRight, Eye, EyeOff, KeyRound, ShieldCheck } from 'lucide-react'
-import { ApiError, getIdentity, setApiKey } from '../api'
+import {
+  ArrowRight,
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  ShieldCheck,
+  UserRound,
+} from 'lucide-react'
+import { ApiError, login } from '../api'
 import { navigateTo } from '../routing'
 
 export function LoginPage(): ReactNode {
-  const [apiKey, setKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault()
-    const key = apiKey.trim()
-    if (!key) {
-      setError('Enter your API key.')
+    const normalizedUsername = username.trim()
+    if (!normalizedUsername || !password) {
+      setError('Enter your username and password.')
       return
     }
     setLoading(true)
     setError(null)
     try {
-      await getIdentity(key)
-      setApiKey(key)
+      await login(normalizedUsername, password)
       navigateTo('/history')
     } catch (caught: unknown) {
       const message =
         caught instanceof ApiError && caught.status === 401
-          ? 'API key is invalid or revoked.'
+          ? 'Username or password is incorrect.'
           : 'Gateway unavailable. Check the service and try again.'
       setError(message)
     } finally {
@@ -51,24 +58,36 @@ export function LoginPage(): ReactNode {
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
-          <label htmlFor="api-key">API key</label>
+          <label htmlFor="username">Username</label>
           <div className={`key-input ${error ? 'input-error' : ''}`}>
-            <KeyRound size={17} aria-hidden="true" />
+            <UserRound size={17} aria-hidden="true" />
             <input
-              id="api-key"
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(event) => setKey(event.target.value)}
-              placeholder="aisk_••••••••••••••••"
-              autoComplete="current-password"
+              id="username"
+              type="text"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="admin"
+              autoComplete="username"
               autoFocus
+            />
+          </div>
+          <label htmlFor="password">Password</label>
+          <div className={`key-input ${error ? 'input-error' : ''}`}>
+            <LockKeyhole size={17} aria-hidden="true" />
+            <input
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="••••••••••••"
+              autoComplete="current-password"
             />
             <button
               type="button"
-              onClick={() => setShowKey((value) => !value)}
-              aria-label={showKey ? 'Hide API key' : 'Show API key'}
+              onClick={() => setShowPassword((value) => !value)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
             >
-              {showKey ? <EyeOff size={17} /> : <Eye size={17} />}
+              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
             </button>
           </div>
           {error && <p className="form-error">{error}</p>}
@@ -80,7 +99,7 @@ export function LoginPage(): ReactNode {
 
         <div className="security-note">
           <span className="status-dot" />
-          Key retained only for this browser session
+          Session protected by an HttpOnly cookie
         </div>
       </section>
       <footer className="login-footer">Protected gateway console</footer>

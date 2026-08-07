@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.connectors.models import SessionRecord
 from app.models import McpServerConfig, ToolPolicy
@@ -45,11 +45,19 @@ class SessionDataKeyResponse(BaseModel):
     data_key: str
 
 
-class ApiKeyIdentityResponse(BaseModel):
-    """Authenticated API-key identity safe for browser display."""
+class LoginRequest(BaseModel):
+    """Web-console credentials."""
 
-    name: str
-    key_prefix: str
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class UserIdentityResponse(BaseModel):
+    """Authenticated web-console identity."""
+
+    username: str
+    is_admin: bool
+    created_at: datetime
 
 
 class SessionSummaryResponse(BaseModel):
@@ -80,3 +88,49 @@ class SessionSummaryResponse(BaseModel):
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionSummaryResponse]
+
+
+class UserResponse(BaseModel):
+    """User info without password hash."""
+
+    id: UUID
+    username: str
+    is_admin: bool
+    created_at: datetime
+    disabled_at: datetime | None
+
+
+class UserListResponse(BaseModel):
+    users: list[UserResponse]
+
+
+class CreateUserRequest(BaseModel):
+    """Payload for creating a new user."""
+
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
+    is_admin: bool = False
+
+
+class UpdateUserRequest(BaseModel):
+    """Partial update payload for a user."""
+
+    password: str | None = Field(default=None, min_length=6, max_length=128)
+    is_admin: bool | None = None
+    disabled: bool | None = None
+
+
+class PolicySummary(BaseModel):
+    """Policy overview for admin display."""
+
+    name: str
+    type: str
+    dialect: str
+    read_only: bool
+    denied_keywords: list[str]
+    tables_count: int
+    pii_rules_count: int
+
+
+class PolicyListResponse(BaseModel):
+    policies: list[PolicySummary]

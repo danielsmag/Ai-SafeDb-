@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from app.connectors.models import ClientInfo
+from app.connectors.models import ClientInfo, SessionRecord
 from app.core.config import DatabaseSettings
 from app.core.logging import (
     NO_SESSION,
@@ -13,6 +13,7 @@ from app.core.logging import (
     mcp_session_id_var,
     session_id_var,
 )
+from app.services.auth import DEV_USER_ID
 from app.services.session import (
     DEV_API_KEY,
     MemorySessionService,
@@ -75,6 +76,9 @@ async def test_memory_session_authenticate_and_open() -> None:
     assert touched.id == session.id
     assert touched.data_key == session.data_key
     assert await store.touch("missing") is None
+    assert await store.list_api_key_ids_for_user(DEV_USER_ID) == [api_key.id]
+    listed_sessions: list[SessionRecord] = await store.list_sessions([api_key.id])
+    assert [listed.id for listed in listed_sessions] == [session.id]
 
 
 async def test_memory_session_data_key_stable_across_reconnect() -> None:
