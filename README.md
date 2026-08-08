@@ -5,6 +5,10 @@ A FastAPI app that reads MCP server definitions from a dedicated folder
 `http`/`sse` endpoint), applies a per-server tool allow/block policy, and
 re-exposes each one as a streamable-HTTP MCP endpoint at `/mcp/<name>`.
 
+**Docs:** `make docs` (local MkDocs at http://127.0.0.1:8001), `make docs-build`,
+or `make docs-up` / `docker compose up --build docs` (Nginx at
+http://localhost:8001).
+
 ```
 mcp-servers/github.yaml   ->  http://localhost:8000/mcp/github
 mcp-servers/docs.yaml     ->  http://localhost:8000/mcp/docs

@@ -53,6 +53,15 @@ services:
       gateway:
         condition: service_healthy
 
+  docs:
+    build:
+      context: .
+      dockerfile: docker/docs/Dockerfile
+    container_name: aisafedb-docs
+    restart: unless-stopped
+    ports:
+      - "${DOCS_PORT:-8001}:80"
+
   postgres-mcp:
     image: mcp/postgres
     build:

@@ -1,5 +1,5 @@
 .PHONY: help sync run dev test lint format typecheck check policy-schema agent \
-	ui-install ui-dev ui-build up down build rebuild logs ps db clean
+	docs docs-build docs-up ui-install ui-dev ui-build up down build rebuild logs ps db clean
 
 help:
 	@echo "Targets:"
@@ -13,9 +13,12 @@ help:
 	@echo "  check      - lint + typecheck + test"
 	@echo "  policy-schema - generate policy JSON Schema"
 	@echo "  agent      - run the exfiltrate-pii red-team scenario"
+	@echo "  docs       - serve MkDocs locally (http://127.0.0.1:8001)"
+	@echo "  docs-build - build static docs into site/"
 	@echo "  ui-install - install frontend dependencies"
 	@echo "  ui-dev     - run frontend dev server"
 	@echo "  ui-build   - build frontend into frontend/dist"
+	@echo "  docs-up    - docker compose up --build docs"
 	@echo "  up         - docker compose up --build gateway"
 	@echo "  down       - docker compose down"
 	@echo "  build      - docker compose build"
@@ -54,6 +57,15 @@ policy-schema:
 agent:
 	uv run python -m app.agents --scenario exfiltrate-pii
 
+docs:
+	uv run mkdocs serve -a 127.0.0.1:8001
+
+docs-build:
+	uv run mkdocs build --strict
+
+docs-up:
+	docker compose up --build docs
+
 ui-install:
 	npm --prefix frontend install
 
@@ -87,5 +99,5 @@ db:
 	docker compose up -d postgres
 
 clean:
-	rm -rf .pytest_cache .ruff_cache
+	rm -rf .pytest_cache .ruff_cache site
 	find . -type d -name "__pycache__" -exec rm -rf {} +

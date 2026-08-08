@@ -1,0 +1,89 @@
+site_name: AISafeDB / MCP Gateway
+site_description: FastAPI gateway that re-exposes YAML-defined MCP servers under one origin
+site_url: https://example.com/aisafedb/
+repo_name: aisafedb
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Get Started:
+      - Overview: index.md
+      - Install: install.md
+      - Quickstart: quickstart.md
+  - Concepts:
+      - Gateway: concepts/gateway.md
+      - Safety guard: concepts/guard.md
+      - Call reports: concepts/reports.md
+  - How-to:
+      - Define a server: how-to/define-server.md
+      - Request history UI: how-to/console.md
+      - Docker: how-to/docker.md
+  - Configuration: configuration.md
+  - API Reference:
+      - Application: reference/application.md
+      - Models: reference/models.md
+      - Reporting: reference/reporting.md
+      - Exceptions: reference/exceptions.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+watch:
+  - app
+  - docs
