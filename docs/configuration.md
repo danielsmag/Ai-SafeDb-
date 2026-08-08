@@ -1,23 +1,49 @@
 # Configuration
 
-Settings come from the environment with a `GATEWAY_` prefix (or `.env`).
+Settings load in this order (later sources win only when earlier ones omit a
+value; earlier sources override later ones):
 
-| Variable | Default | Purpose |
+1. Constructor kwargs
+2. Process environment (`GATEWAY_*`)
+3. `.env`
+4. `settings.toml` (committed non-secret defaults)
+5. Field defaults in code
+
+Secrets (DB password, tokens, API keys) stay in `.env` / the environment.
+Tune models, guard policy, TTLs, and paths in `settings.toml`.
+
+## `settings.toml`
+
+| Key | Default | Purpose |
 | --- | --- | --- |
-| `GATEWAY_CONFIG_DIR` | `mcp-servers` | Folder scanned for definitions |
-| `GATEWAY_MOUNT_PREFIX` | `/mcp` | Path prefix for exposed endpoints |
-| `GATEWAY_PUBLIC_BASE_URL` | `http://localhost:8000` | Base URL reported by `/servers` |
-| `GATEWAY_LOG_LEVEL` | `INFO` | Log level |
-| `GATEWAY_STATELESS_HTTP` | `false` | MCP transport without server-side sessions |
-| `GATEWAY_JSON_RESPONSE` | `false` | JSON instead of SSE streams |
-| `GATEWAY_ALLOWED_HOSTS` | `[]` | Extra hostnames for MCP endpoints |
-| `GATEWAY_ALLOWED_ORIGINS` | `[]` | Extra origins for MCP endpoints |
-| `GATEWAY_AUTH__SESSION_TTL_SECONDS` | `86400` | Web-console session idle TTL |
-| `GATEWAY_AUTH__COOKIE_NAME` | `aisafedb_session` | Web-console session cookie name |
-| `GATEWAY_AUTH__COOKIE_SECURE` | `false` | Require HTTPS for session cookie |
-| `GATEWAY_GUARD__ENABLED` | (see `.env.example`) | Local LLM safety guard |
-| `GATEWAY_LLM__BASE_URL` | (see `.env.example`) | OpenAI-compatible LLM endpoint |
-| `GATEWAY_SESSION__IDLE_TTL_SECONDS` | `86400` | MCP session idle TTL (`0` = off) |
-| `GATEWAY_DATABASE__*` / `SAFE_DB_SCHEMA` | (see `.env.example`) | DB connection + schema |
+| `config_dir` | `mcp-servers` | Folder scanned for MCP definitions |
+| `policies_dir` | `policies` | Policy YAML folder |
+| `pipelines_dir` | `pipelines` | Pipeline YAML folder |
+| `workflows_dir` | `workflows` | Workflow YAML folder |
+| `sources_dir` | `sources` | Source YAML folder |
+| `outputs_dir` | `outputs` | Output YAML folder |
+| `mount_prefix` | `/mcp` | Path prefix for exposed MCP endpoints |
+| `public_base_url` | `http://localhost:8000` | Base URL reported by `/servers` |
+| `log_level` | `INFO` | Log level |
+| `stateless_http` | `false` | MCP transport without server-side sessions |
+| `json_response` | `false` | JSON instead of SSE streams |
+| `allowed_hosts` | `[]` | Extra hostnames for MCP endpoints |
+| `allowed_origins` | `[]` | Extra origins for MCP endpoints |
+| `llm.*` | (see file) | Models, timeouts, concurrency |
+| `guard.*` | (see file) | Local LLM safety guard |
+| `session.idle_ttl_seconds` | `86400` | MCP session idle TTL (`0` = off) |
+| `auth.*` | (see file) | Web-console cookie session |
+| `pipeline.*` | (see file) | Task parallelism, timeout, retries |
 
-See `.env.example` for the full list including nested guard/LLM/database knobs.
+## Environment overrides
+
+Any `settings.toml` key can be overridden with `GATEWAY_` and nested `__`
+(for example `GATEWAY_GUARD__ENABLED=true`, `GATEWAY_LLM__BASE_URL=...`).
+
+| Variable | Purpose |
+| --- | --- |
+| `GATEWAY_DATABASE__*` / `SAFE_DB_SCHEMA` | DB connection + schema (prefer env) |
+| `GATEWAY_LLM__API_KEY` | LLM API key when the endpoint requires one |
+| `GATEWAY_LLM__BASE_URL` | OpenAI-compatible LLM endpoint (Docker sets host gateway) |
+
+See `.env.example` for secrets and deploy-specific overrides.

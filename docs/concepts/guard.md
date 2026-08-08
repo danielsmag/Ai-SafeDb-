@@ -7,6 +7,15 @@ closed by default.
 
 ## Enable
 
+In `settings.toml`:
+
+```toml
+[guard]
+enabled = true
+```
+
+Or via `.env` / environment:
+
 ```dotenv
 GATEWAY_GUARD__ENABLED=true
 GATEWAY_LLM__BASE_URL=http://localhost:11434/v1
