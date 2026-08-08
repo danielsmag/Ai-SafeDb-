@@ -227,40 +227,95 @@ export function adminGetHistoryFacets(): Promise<HistoryFacets> {
   return request<HistoryFacets>('/api/admin/history/facets')
 }
 
-export type WorkflowNodeKind = 'source' | 'mcp' | 'policy' | 'output'
+export type PipelineTaskType =
+  | 'source'
+  | 'policy'
+  | 'transform'
+  | 'validation'
+  | 'guard'
+  | 'mcp_server'
+  | 'output'
+  | 'custom'
+export type PipelineStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type PipelineTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
 
-export interface WorkflowNode {
-  id: string
-  kind: WorkflowNodeKind
-  label: string
-  sublabel: string | null
-  missing: boolean
-  details: Record<string, string>
-  yaml: string | null
+export interface PipelineTaskResult {
+  name: string
+  type: PipelineTaskType
+  status: PipelineTaskStatus
+  output: unknown
+  error: string | null
+  metadata: Record<string, unknown>
+  started_at: string | null
+  finished_at: string | null
 }
 
-export interface WorkflowEdge {
+export interface PipelineRun {
+  run_id: string
+  pipeline_name: string
+  status: PipelineStatus
+  tasks: Record<string, PipelineTaskResult>
+  started_at: string
+  finished_at: string | null
+  error: string | null
+}
+
+export interface PipelineNode {
+  id: string
+  kind: PipelineTaskType
+  label: string
+  enabled: boolean
+  on_failure: 'fail' | 'skip' | 'warn'
+  details: Record<string, string>
+  yaml: string
+}
+
+export interface PipelineEdge {
   from_id: string
   to_id: string
 }
 
-export interface WorkflowGraph {
-  nodes: WorkflowNode[]
-  edges: WorkflowEdge[]
+export interface PipelineGraph {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
 }
 
-export interface WorkflowSummary {
+export interface PipelineSummary {
   name: string
   enabled: boolean
   description: string | null
-  source: string
-  mcp_server: string
-  policies: string[]
-  output: string
-  valid: boolean
-  graph: WorkflowGraph
+  task_count: number
+  graph: PipelineGraph
+  latest_run: PipelineRun | null
 }
 
-export function adminListWorkflows(): Promise<{ workflows: WorkflowSummary[] }> {
-  return request<{ workflows: WorkflowSummary[] }>('/api/admin/workflows')
+export function adminListPipelines(): Promise<{ pipelines: PipelineSummary[] }> {
+  return request<{ pipelines: PipelineSummary[] }>('/api/admin/pipelines')
+}
+
+export function adminStartPipeline(
+  name: string,
+  inputs: Record<string, unknown> = {},
+): Promise<PipelineRun> {
+  return request<PipelineRun>(`/api/admin/pipelines/${encodeURIComponent(name)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs }),
+  })
+}
+
+export function adminGetPipelineRun(runId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`/api/admin/pipeline-runs/${runId}`)
+}
+
+export function adminCancelPipelineRun(runId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`/api/admin/pipeline-runs/${runId}/cancel`, {
+    method: 'POST',
+  })
 }

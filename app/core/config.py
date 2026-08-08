@@ -59,6 +59,16 @@ class AuthSettings(BaseModel):
     cookie_secure: bool = False
 
 
+class PipelineSettings(BaseModel):
+    """Pipeline task scheduling, timeout, and retry limits."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True)
+
+    max_parallel_tasks: int = Field(default=4, ge=1)
+    task_timeout_seconds: float = Field(default=300.0, gt=0)
+    retry_count: int = Field(default=0, ge=0)
+
+
 class DatabaseSettings(BaseModel):
     """Postgres connection used for gateway API keys and MCP sessions."""
 
@@ -124,6 +134,7 @@ class AppSettings(BaseSettings):
 
     config_dir: Path = Path("mcp-servers")
     policies_dir: Path = Path("policies")
+    pipelines_dir: Path = Path("pipelines")
     workflows_dir: Path = Path("workflows")
     sources_dir: Path = Path("sources")
     outputs_dir: Path = Path("outputs")
@@ -141,6 +152,7 @@ class AppSettings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
 
     @field_validator("mount_prefix")
     @classmethod

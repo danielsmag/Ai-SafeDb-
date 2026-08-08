@@ -45,11 +45,21 @@ from app.schemas import (
 )
 from app.services.auth import AuthStore
 from app.services.config_loader import ConfigLoader
+from app.services.guard import GuardService
 from app.services.history import (
     HistoryFacets,
     HistoryStore,
     ToolCallHistory,
     ToolCallHistoryPage,
+)
+from app.services.pipelines import (
+    PipelineCatalog,
+    PipelineExecutor,
+    PipelineListResponse,
+    PipelineLoader,
+    PipelineResult,
+    PipelineRunRequest,
+    PipelineService,
 )
 from app.services.session import SessionStore
 from app.services.workflows import (
@@ -73,6 +83,9 @@ class GatewayApplication:
         auth_store: AuthStore | None = None,
         history_store: HistoryStore | None = None,
         workflow_loader: WorkflowLoader | None = None,
+        pipeline_loader: PipelineLoader | None = None,
+        pipeline_executor: PipelineExecutor | None = None,
+        guard_service: GuardService | None = None,
     ) -> None:
         self._settings: AppSettings = settings
         self._loader: ConfigLoader = loader
@@ -83,6 +96,10 @@ class GatewayApplication:
         self._auth_store: AuthStore | None = auth_store
         self._history_store: HistoryStore | None = history_store
         self._workflow_loader: WorkflowLoader | None = workflow_loader
+        self._pipeline_loader: PipelineLoader | None = pipeline_loader
+        self._pipeline_executor: PipelineExecutor | None = pipeline_executor
+        self._guard_service: GuardService | None = guard_service
+        self._pipeline_service: PipelineService | None = None
         self._policies: dict[str, Policy] = {}
         self._workflow_catalog: WorkflowCatalog = WorkflowCatalog()
 
@@ -96,6 +113,25 @@ class GatewayApplication:
             self._workflow_loader.load()
             if self._workflow_loader is not None
             else WorkflowCatalog()
+        )
+        pipeline_catalog: PipelineCatalog = (
+            self._pipeline_loader.load()
+            if self._pipeline_loader is not None
+            else PipelineCatalog()
+        )
+        configs_by_name: dict[str, McpServerConfig] = {
+            config.name: config for config in configs
+        }
+        self._pipeline_service = (
+            PipelineService(
+                catalog=pipeline_catalog,
+                executor=self._pipeline_executor,
+                mcp_servers=configs_by_name,
+                policies=self._policies,
+                guard_service=self._guard_service,
+            )
+            if self._pipeline_executor is not None
+            else None
         )
         logger.info(
             "Loaded %d MCP server definition(s) from %s",
@@ -197,6 +233,8 @@ class GatewayApplication:
         @api.get("/servers", response_model=ServerListResponse, tags=["gateway"])
         async def servers() -> ServerListResponse:
             return ServerListResponse(servers=summaries)
+
+        self._register_pipeline_routes(api, auth_store)
 
         if store is not None:
 
@@ -379,6 +417,7 @@ class GatewayApplication:
                     request: Request,
                 ) -> UserListResponse:
                     await self._require_admin_session(auth_store, request)
+                    assert auth_store is not None
                     users: list[User] = await auth_store.list_users()
                     return UserListResponse(
                         users=[
@@ -404,6 +443,7 @@ class GatewayApplication:
                     request: Request,
                 ) -> UserResponse:
                     await self._require_admin_session(auth_store, request)
+                    assert auth_store is not None
                     try:
                         user: User = await auth_store.create_user(
                             payload.username,
@@ -436,6 +476,7 @@ class GatewayApplication:
                     request: Request,
                 ) -> UserResponse:
                     await self._require_admin_session(auth_store, request)
+                    assert auth_store is not None
                     user: User | None = await auth_store.update_user(
                         user_id,
                         password=payload.password,
@@ -617,6 +658,70 @@ class GatewayApplication:
                     mcp_session_id=session.mcp_session_id,
                     data_key=session.data_key,
                 )
+
+    def _register_pipeline_routes(
+        self,
+        api: FastAPI,
+        auth_store: AuthStore | None,
+    ) -> None:
+        pipeline_service: PipelineService | None = self._pipeline_service
+        if pipeline_service is None:
+            return
+
+        @api.get(
+            "/api/admin/pipelines",
+            response_model=PipelineListResponse,
+            tags=["admin"],
+        )
+        async def admin_list_pipelines(request: Request) -> PipelineListResponse:
+            await self._require_admin_session(auth_store, request)
+            return PipelineListResponse(pipelines=pipeline_service.list_pipelines())
+
+        @api.post(
+            "/api/admin/pipelines/{pipeline_name}/runs",
+            response_model=PipelineResult,
+            status_code=202,
+            tags=["admin"],
+        )
+        async def admin_start_pipeline(
+            pipeline_name: str,
+            payload: PipelineRunRequest,
+            request: Request,
+        ) -> PipelineResult:
+            await self._require_admin_session(auth_store, request)
+            if not pipeline_service.has_pipeline(pipeline_name):
+                raise HTTPException(status_code=404, detail="unknown pipeline")
+            return pipeline_service.start(pipeline_name, payload.inputs)
+
+        @api.get(
+            "/api/admin/pipeline-runs/{run_id}",
+            response_model=PipelineResult,
+            tags=["admin"],
+        )
+        async def admin_get_pipeline_run(
+            run_id: UUID,
+            request: Request,
+        ) -> PipelineResult:
+            await self._require_admin_session(auth_store, request)
+            run: PipelineResult | None = pipeline_service.get_run(run_id)
+            if run is None:
+                raise HTTPException(status_code=404, detail="unknown pipeline run")
+            return run
+
+        @api.post(
+            "/api/admin/pipeline-runs/{run_id}/cancel",
+            response_model=PipelineResult,
+            tags=["admin"],
+        )
+        async def admin_cancel_pipeline_run(
+            run_id: UUID,
+            request: Request,
+        ) -> PipelineResult:
+            await self._require_admin_session(auth_store, request)
+            run: PipelineResult | None = pipeline_service.cancel(run_id)
+            if run is None:
+                raise HTTPException(status_code=404, detail="unknown pipeline run")
+            return run
 
     async def _require_user_session(
         self,
