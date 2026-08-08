@@ -59,7 +59,7 @@ import {
   type PipelineSummary,
   type PipelineTaskType,
 } from '../api'
-import { navigateTo } from '../routing'
+import { navigateTo, navigateToClient } from '../routing'
 
 type TabId = 'users' | 'policies' | 'pipelines' | 'requests'
 type SortColumn =
@@ -1800,7 +1800,7 @@ export function AdminPage(): ReactNode {
             Requests
           </button>
           <div className="tab-spacer" />
-          <button className="tab-button" onClick={() => navigateTo('/history')}>
+          <button className="tab-button" onClick={() => navigateToClient('/history')}>
             <ArrowDown size={16} style={{ transform: 'rotate(90deg)' }} />
             User View
           </button>

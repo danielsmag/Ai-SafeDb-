@@ -24,7 +24,7 @@ import {
   type Identity,
   type Session,
 } from '../api'
-import { navigateTo } from '../routing'
+import { navigateTo, navigateToManager } from '../routing'
 
 const PAGE_SIZE = 25
 
@@ -324,7 +324,7 @@ export function HistoryPage(): ReactNode {
           {identity?.is_admin && (
             <button
               className="icon-button"
-              onClick={() => navigateTo('/admin')}
+              onClick={() => navigateToManager('/admin')}
               aria-label="Admin panel"
               title="Admin"
             >

@@ -4,19 +4,28 @@ import { ApiError, getIdentity, type Identity } from './api'
 import { AdminPage } from './pages/AdminPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { LoginPage } from './pages/LoginPage'
-import { currentRoute, navigateTo, type AppRoute } from './routing'
+import {
+  currentRoute,
+  currentSurface,
+  navigateTo,
+  type AppRoute,
+} from './routing'
 
 function App(): ReactNode {
   const [route, setRoute] = useState<AppRoute>(currentRoute)
+  const [surface, setSurface] = useState(currentSurface)
   const [authStatus, setAuthStatus] = useState<
     'loading' | 'authenticated' | 'anonymous'
   >('loading')
   const [identity, setIdentity] = useState<Identity | null>(null)
 
   useEffect(() => {
-    const handleRoute = (): void => setRoute(currentRoute())
-    window.addEventListener('hashchange', handleRoute)
-    return () => window.removeEventListener('hashchange', handleRoute)
+    const handleRoute = (): void => {
+      setRoute(currentRoute())
+      setSurface(currentSurface())
+    }
+    window.addEventListener('popstate', handleRoute)
+    return () => window.removeEventListener('popstate', handleRoute)
   }, [])
 
   useEffect(() => {
@@ -33,23 +42,36 @@ function App(): ReactNode {
         }
         setAuthStatus('anonymous')
       })
-  }, [route])
+  }, [route, surface])
 
   useEffect(() => {
     if (authStatus === 'loading') return
-    const isProtected: boolean = route === '/history' || route === '/admin'
+    const isProtected: boolean = route !== '/login'
     if (isProtected && authStatus === 'anonymous') navigateTo('/login')
-    if (route === '/login' && authStatus === 'authenticated') navigateTo('/history')
-    if (route === '/admin' && authStatus === 'authenticated' && !identity?.is_admin) {
-      navigateTo('/history')
+    if (route === '/login' && authStatus === 'authenticated') {
+      navigateTo(surface === 'manager' ? '/admin' : '/history')
     }
-  }, [authStatus, route, identity])
+    if (
+      surface === 'manager' &&
+      route === '/admin' &&
+      authStatus === 'authenticated' &&
+      !identity?.is_admin
+    ) {
+      navigateTo('/login')
+    }
+  }, [authStatus, route, identity, surface])
 
   if (authStatus === 'loading') return null
+
   if (authStatus === 'authenticated') {
-    if (route === '/admin' && identity?.is_admin) return <AdminPage />
-    if (route === '/history' || route === '/admin') return <HistoryPage />
+    if (surface === 'manager' && route === '/admin' && identity?.is_admin) {
+      return <AdminPage />
+    }
+    if (surface === 'client' && route === '/history') {
+      return <HistoryPage />
+    }
   }
+
   return <LoginPage />
 }
 

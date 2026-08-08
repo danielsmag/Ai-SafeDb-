@@ -54,14 +54,14 @@ def test_bootstrap_exposes_container_on_application_state(tmp_path: Path) -> Non
         getattr(route, "path", None) for route in api.routes
     }
     assert route_paths >= {
-        "/health",
-        "/servers",
-        "/api/admin/pipelines",
-        "/api/admin/pipelines/{pipeline_name}/runs",
-        "/api/admin/pipeline-runs/{run_id}",
-        "/api/admin/pipeline-runs/{run_id}/cancel",
-        "/sessions/data-key",
-        "/sessions/{mcp_session_id}/data-key",
+        "/api/v1/health",
+        "/api/v1/servers",
+        "/api/v1/manager/pipelines",
+        "/api/v1/manager/pipelines/{pipeline_name}/runs",
+        "/api/v1/manager/pipeline-runs/{run_id}",
+        "/api/v1/manager/pipeline-runs/{run_id}/cancel",
+        "/api/v1/sessions/data-key",
+        "/api/v1/sessions/{mcp_session_id}/data-key",
     }
 
 
@@ -92,5 +92,5 @@ def test_pipeline_routes_do_not_require_history_store(tmp_path: Path) -> None:
         getattr(route, "path", None) for route in api.routes
     }
 
-    assert "/api/admin/pipelines" in route_paths
-    assert "/api/admin/pipelines/{pipeline_name}/runs" in route_paths
+    assert "/api/v1/manager/pipelines" in route_paths
+    assert "/api/v1/manager/pipelines/{pipeline_name}/runs" in route_paths

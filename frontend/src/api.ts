@@ -1,6 +1,12 @@
 export type Decision = 'allow' | 'block' | null
 export type CallStatus = 'ok' | 'blocked' | 'error'
 
+import { currentSurface } from './routing'
+
+const API_V1_PREFIX: string = '/api/v1'
+const CLIENT_API_PREFIX: string = `${API_V1_PREFIX}/client`
+const MANAGER_API_PREFIX: string = `${API_V1_PREFIX}/manager`
+
 export interface Identity {
   username: string
   is_admin: boolean
@@ -61,6 +67,11 @@ export class ApiError extends Error {
   }
 }
 
+
+function apiPrefixForSurface(): string {
+  return currentSurface() === 'manager' ? MANAGER_API_PREFIX : CLIENT_API_PREFIX
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -81,7 +92,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function login(username: string, password: string): Promise<Identity> {
-  return request<Identity>('/api/login', {
+  return request<Identity>(`${apiPrefixForSurface()}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -89,15 +100,15 @@ export function login(username: string, password: string): Promise<Identity> {
 }
 
 export function logout(): Promise<void> {
-  return request<void>('/api/logout', { method: 'POST' })
+  return request<void>(`${apiPrefixForSurface()}/logout`, { method: 'POST' })
 }
 
 export function getIdentity(): Promise<Identity> {
-  return request<Identity>('/api/me')
+  return request<Identity>(`${apiPrefixForSurface()}/me`)
 }
 
 export function getSessions(): Promise<{ sessions: Session[] }> {
-  return request<{ sessions: Session[] }>('/api/sessions')
+  return request<{ sessions: Session[] }>(`${CLIENT_API_PREFIX}/sessions`)
 }
 
 export interface HistoryFilters {
@@ -114,7 +125,7 @@ export function getHistory(filters: HistoryFilters): Promise<HistoryPage> {
   })
   if (filters.server) query.set('server', filters.server)
   if (filters.sessionId) query.set('session_id', filters.sessionId)
-  return request<HistoryPage>(`/api/history?${query}`)
+  return request<HistoryPage>(`${CLIENT_API_PREFIX}/history?${query}`)
 }
 
 export interface AdminUser {
@@ -175,11 +186,11 @@ export interface AdminHistoryFilters {
 }
 
 export function adminListUsers(): Promise<{ users: AdminUser[] }> {
-  return request<{ users: AdminUser[] }>('/api/admin/users')
+  return request<{ users: AdminUser[] }>(`${MANAGER_API_PREFIX}/users`)
 }
 
 export function adminCreateUser(payload: CreateUserPayload): Promise<AdminUser> {
-  return request<AdminUser>('/api/admin/users', {
+  return request<AdminUser>(`${MANAGER_API_PREFIX}/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -190,7 +201,7 @@ export function adminUpdateUser(
   userId: string,
   payload: UpdateUserPayload,
 ): Promise<AdminUser> {
-  return request<AdminUser>(`/api/admin/users/${userId}`, {
+  return request<AdminUser>(`${MANAGER_API_PREFIX}/users/${userId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -198,11 +209,11 @@ export function adminUpdateUser(
 }
 
 export function adminListPolicies(): Promise<{ policies: PolicySummary[] }> {
-  return request<{ policies: PolicySummary[] }>('/api/admin/policies')
+  return request<{ policies: PolicySummary[] }>(`${MANAGER_API_PREFIX}/policies`)
 }
 
 export function adminListSessions(): Promise<{ sessions: Session[] }> {
-  return request<{ sessions: Session[] }>('/api/admin/sessions')
+  return request<{ sessions: Session[] }>(`${MANAGER_API_PREFIX}/sessions`)
 }
 
 export function adminGetHistory(filters: AdminHistoryFilters): Promise<HistoryPage> {
@@ -220,11 +231,11 @@ export function adminGetHistory(filters: AdminHistoryFilters): Promise<HistoryPa
   if (filters.until) query.set('until', filters.until)
   if (filters.sortBy) query.set('sort_by', filters.sortBy)
   if (filters.sortOrder) query.set('sort_order', filters.sortOrder)
-  return request<HistoryPage>(`/api/admin/history?${query}`)
+  return request<HistoryPage>(`${MANAGER_API_PREFIX}/history?${query}`)
 }
 
 export function adminGetHistoryFacets(): Promise<HistoryFacets> {
-  return request<HistoryFacets>('/api/admin/history/facets')
+  return request<HistoryFacets>(`${MANAGER_API_PREFIX}/history/facets`)
 }
 
 export type PipelineTaskType =
@@ -296,14 +307,14 @@ export interface PipelineSummary {
 }
 
 export function adminListPipelines(): Promise<{ pipelines: PipelineSummary[] }> {
-  return request<{ pipelines: PipelineSummary[] }>('/api/admin/pipelines')
+  return request<{ pipelines: PipelineSummary[] }>(`${MANAGER_API_PREFIX}/pipelines`)
 }
 
 export function adminStartPipeline(
   name: string,
   inputs: Record<string, unknown> = {},
 ): Promise<PipelineRun> {
-  return request<PipelineRun>(`/api/admin/pipelines/${encodeURIComponent(name)}/runs`, {
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipelines/${encodeURIComponent(name)}/runs`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ inputs }),
@@ -311,11 +322,11 @@ export function adminStartPipeline(
 }
 
 export function adminGetPipelineRun(runId: string): Promise<PipelineRun> {
-  return request<PipelineRun>(`/api/admin/pipeline-runs/${runId}`)
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipeline-runs/${runId}`)
 }
 
 export function adminCancelPipelineRun(runId: string): Promise<PipelineRun> {
-  return request<PipelineRun>(`/api/admin/pipeline-runs/${runId}/cancel`, {
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipeline-runs/${runId}/cancel`, {
     method: 'POST',
   })
 }

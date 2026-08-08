@@ -4,7 +4,7 @@ from dependency_injector import containers, providers
 
 from app.core.config import AppSettings
 from app.core.database import Database
-from app.domain.gateway_application import GatewayApplication
+from app.domain.application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
 from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
