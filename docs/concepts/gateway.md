@@ -9,7 +9,7 @@ Client  --Bearer API key-->  Gateway  --policy/guard-->  Source MCP
 
 ## Boot flow
 
-1. Validate settings (`GATEWAY_*` env / `.env`)
+1. Validate settings (`settings.toml`, then `GATEWAY_*` env / `.env`)
 2. Scan `GATEWAY_CONFIG_DIR` for `*.yaml` / `*.yml`
 3. Expand `${VAR}` / `${VAR:-fallback}` in definition strings
 4. Attach SQL policies from `policies/` when referenced

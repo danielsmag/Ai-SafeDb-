@@ -29,6 +29,7 @@ services:
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     volumes:
+      - ./settings.toml:/app/settings.toml:ro
       - ./mcp-servers:/app/mcp-servers:ro
       - ./policies:/app/policies:ro
       - ./pipelines:/app/pipelines:ro

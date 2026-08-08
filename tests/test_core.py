@@ -27,6 +27,39 @@ def test_settings_are_loaded_and_normalized_from_environment(
     assert settings.public_base_url == "https://gateway.example.com"
 
 
+def test_settings_load_from_toml_and_env_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GATEWAY_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("GATEWAY_LLM__GUARD_MODEL", raising=False)
+    monkeypatch.delenv("GATEWAY_GUARD__ENABLED", raising=False)
+    (tmp_path / "settings.toml").write_text(
+        "\n".join(
+            [
+                'log_level = "DEBUG"',
+                "[llm]",
+                'guard_model = "from-toml"',
+                "[guard]",
+                "enabled = true",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    from_toml: AppSettings = AppSettings()
+    assert from_toml.log_level == "DEBUG"
+    assert from_toml.llm.guard_model == "from-toml"
+    assert from_toml.guard.enabled is True
+
+    monkeypatch.setenv("GATEWAY_LLM__GUARD_MODEL", "from-env")
+    from_env: AppSettings = AppSettings()
+    assert from_env.llm.guard_model == "from-env"
+    assert from_env.guard.enabled is True
+
+
 def test_container_applies_expected_dependency_lifetimes(tmp_path: Path) -> None:
     settings: AppSettings = AppSettings(config_dir=tmp_path)
     container: ApplicationContainer = ApplicationContainer(settings=settings)

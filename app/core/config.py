@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
 
 type LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 type GuardErrorMode = Literal["block", "allow"]
@@ -120,13 +125,14 @@ class DatabaseSettings(BaseModel):
 
 
 class AppSettings(BaseSettings):
-    """Immutable settings loaded from environment variables and ``.env``."""
+    """Immutable settings from ``settings.toml``, then env / ``.env`` overrides."""
 
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_prefix="GATEWAY_",
         env_file=".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
+        toml_file="settings.toml",
         extra="ignore",
         frozen=True,
         validate_default=True,
@@ -153,6 +159,24 @@ class AppSettings(BaseSettings):
     session: SessionSettings = Field(default_factory=SessionSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     pipeline: PipelineSettings = Field(default_factory=PipelineSettings)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        """Prefer init/env/.env over committed ``settings.toml`` defaults."""
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     @field_validator("mount_prefix")
     @classmethod

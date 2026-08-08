@@ -139,7 +139,7 @@ ollama pull qwen3:4b
 ollama pull qwen3.6:35b-a3b
 ```
 
-Enable the guard in `.env`:
+Enable the guard in `settings.toml` (`[guard] enabled = true`) or via `.env`:
 
 ```dotenv
 GATEWAY_GUARD__ENABLED=true
@@ -219,21 +219,15 @@ gitignored and should be handled as restricted audit output.
 
 ## Configuration
 
-All settings come from the environment with a `GATEWAY_` prefix (or `.env`):
+Non-secret defaults live in `settings.toml`. Secrets and deploy overrides use
+`.env` / `GATEWAY_*` environment variables (nested fields use `__`).
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `GATEWAY_CONFIG_DIR` | `mcp-servers` | Folder scanned for definitions |
-| `GATEWAY_MOUNT_PREFIX` | `/mcp` | Path prefix for exposed endpoints |
-| `GATEWAY_PUBLIC_BASE_URL` | `http://localhost:8000` | Base URL reported by `/servers` |
-| `GATEWAY_LOG_LEVEL` | `INFO` | Log level |
-| `GATEWAY_STATELESS_HTTP` | `false` | Run the MCP transport without server-side sessions |
-| `GATEWAY_JSON_RESPONSE` | `false` | Reply with JSON instead of SSE streams |
-| `GATEWAY_ALLOWED_HOSTS` | `[]` | Extra hostnames accepted by the MCP endpoints |
-| `GATEWAY_ALLOWED_ORIGINS` | `[]` | Extra origins accepted by the MCP endpoints |
-| `GATEWAY_AUTH__SESSION_TTL_SECONDS` | `86400` | Web-console session idle TTL |
-| `GATEWAY_AUTH__COOKIE_NAME` | `aisafedb_session` | Web-console session cookie name |
-| `GATEWAY_AUTH__COOKIE_SECURE` | `false` | Require HTTPS for the session cookie |
+See [docs/configuration.md](docs/configuration.md) for the full list.
+
+| Source | Use for |
+| --- | --- |
+| `settings.toml` | Models, guard, TTLs, dirs, mount prefix |
+| `.env` / `GATEWAY_*` | DB credentials, tokens, per-machine overrides |
 
 Definitions are validated at startup: an invalid file, or a `${VAR}` with no
 value and no `${VAR:-fallback}` default, aborts the boot with the offending file

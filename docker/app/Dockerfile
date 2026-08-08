@@ -28,6 +28,7 @@ COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-install-project
 
 COPY app ./app
+COPY settings.toml ./settings.toml
 COPY policies ./policies
 COPY workflows ./workflows
 COPY sources ./sources

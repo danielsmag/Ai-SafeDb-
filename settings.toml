@@ -1,0 +1,47 @@
+# Non-secret gateway defaults. Environment variables and `.env` override these.
+# Keep secrets (passwords, tokens, API keys) in `.env` / the process environment.
+
+config_dir = "mcp-servers"
+policies_dir = "policies"
+pipelines_dir = "pipelines"
+workflows_dir = "workflows"
+sources_dir = "sources"
+outputs_dir = "outputs"
+mount_prefix = "/mcp"
+public_base_url = "http://localhost:8000"
+log_level = "INFO"
+stateless_http = false
+json_response = false
+allowed_hosts = []
+allowed_origins = []
+
+# `base_url` intentionally omitted so local runs keep the code default
+# (http://localhost:11434/v1) and Docker Compose can set
+# GATEWAY_LLM__BASE_URL=http://host.docker.internal:11434/v1.
+[llm]
+guard_model = "qwen3:4b"
+rewrite_model = "qwen3:4b"
+agent_model = "qwen3.6:35b-a3b"
+timeout_seconds = 10.0
+max_concurrency = 2
+keep_alive = "10m"
+
+[guard]
+enabled = false
+on_error = "block"
+inspect_results = true
+cache_ttl_seconds = 300.0
+
+[session]
+# 0 disables idle expiry.
+idle_ttl_seconds = 86400.0
+
+[auth]
+session_ttl_seconds = 86400.0
+cookie_name = "aisafedb_session"
+cookie_secure = false
+
+[pipeline]
+max_parallel_tasks = 4
+task_timeout_seconds = 300.0
+retry_count = 0
