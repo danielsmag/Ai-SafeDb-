@@ -10,7 +10,7 @@ from sqlalchemy.engine import Result
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import col, select
 
-from app.connectors.orm_models import ApiKeyORM, ToolCallORM, UserORM
+from app.models.orm import ApiKeyORM, ToolCallORM, UserORM
 from app.core.database import Database
 from app.core.logging import logger
 from app.services.history.models import (

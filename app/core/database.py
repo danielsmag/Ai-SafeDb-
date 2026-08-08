@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.sql.elements import TextClause
 from sqlmodel import SQLModel
 
-from app.connectors.orm_models import APP_SCHEMA_TOKEN
+from app.models.orm import APP_SCHEMA_TOKEN
 from app.core.config import DatabaseSettings
 from app.core.logging import logger
 

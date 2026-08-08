@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.sql.schema import Table
 from sqlmodel import SQLModel
 
-from app.connectors.orm_models import APP_SCHEMA_TOKEN
+from app.models.orm import APP_SCHEMA_TOKEN
 from app.core.config import DatabaseSettings
 
 

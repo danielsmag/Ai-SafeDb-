@@ -15,7 +15,7 @@ from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, select
 
 from app.connectors.models import ApiKey, ClientInfo, SessionRecord
-from app.connectors.orm_models import ApiKeyORM, SessionORM
+from app.models.orm import ApiKeyORM, SessionORM
 from app.core.database import Database
 from app.core.logging import logger
 from app.services.auth import DEV_USER_ID
