@@ -13,7 +13,7 @@ from sqlalchemy.sql.selectable import Select
 from sqlmodel import col, select
 
 from app.connectors.models import User, WebSession
-from app.connectors.orm_models import UserORM, WebSessionORM
+from app.models.orm import UserORM, WebSessionORM
 from app.core.database import Database
 from app.core.logging import logger
 from app.services.auth.keys import (
