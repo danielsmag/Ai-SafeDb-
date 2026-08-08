@@ -40,18 +40,18 @@ async def test_login_identity_logout_cookie_flow(tmp_path: Path) -> None:
         transport=httpx.ASGITransport(app=app),
         base_url="http://gateway.test",
     ) as client:
-        anonymous: httpx.Response = await client.get("/api/me")
+        anonymous: httpx.Response = await client.get("/api/v1/client/me")
         invalid: httpx.Response = await client.post(
-            "/api/login",
+            "/api/v1/client/login",
             json={"username": DEV_USERNAME, "password": "wrong"},
         )
         logged_in: httpx.Response = await client.post(
-            "/api/login",
+            "/api/v1/client/login",
             json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
         )
-        identity: httpx.Response = await client.get("/api/me")
-        logout: httpx.Response = await client.post("/api/logout")
-        after_logout: httpx.Response = await client.get("/api/me")
+        identity: httpx.Response = await client.get("/api/v1/client/me")
+        logout: httpx.Response = await client.post("/api/v1/client/logout")
+        after_logout: httpx.Response = await client.get("/api/v1/client/me")
 
     assert anonymous.status_code == 401
     assert invalid.status_code == 401
@@ -70,12 +70,12 @@ async def test_expired_session_is_rejected(tmp_path: Path) -> None:
         base_url="http://gateway.test",
     ) as client:
         logged_in: httpx.Response = await client.post(
-            "/api/login",
+            "/api/v1/client/login",
             json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
         )
         raw_token: str = client.cookies["aisafedb_session"]
         auth.expire_session(raw_token)
-        expired: httpx.Response = await client.get("/api/me")
+        expired: httpx.Response = await client.get("/api/v1/client/me")
 
     assert logged_in.status_code == 200
     assert expired.status_code == 401

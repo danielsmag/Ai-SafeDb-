@@ -180,16 +180,16 @@ async def test_history_api_authentication_and_owner_scoping(tmp_path: Path) -> N
         transport=httpx.ASGITransport(app=app),
         base_url="http://gateway.test",
     ) as client:
-        unauthorized: httpx.Response = await client.get("/api/history")
+        unauthorized: httpx.Response = await client.get("/api/v1/client/history")
         login: httpx.Response = await client.post(
-            "/api/login",
+            "/api/v1/client/login",
             json={"username": DEV_USERNAME, "password": DEV_PASSWORD},
         )
-        identity: httpx.Response = await client.get("/api/me")
-        page: httpx.Response = await client.get("/api/history")
-        detail: httpx.Response = await client.get(f"/api/history/{own_entry.id}")
-        hidden: httpx.Response = await client.get(f"/api/history/{other_entry.id}")
-        session_page: httpx.Response = await client.get("/api/sessions")
+        identity: httpx.Response = await client.get("/api/v1/client/me")
+        page: httpx.Response = await client.get("/api/v1/client/history")
+        detail: httpx.Response = await client.get(f"/api/v1/client/history/{own_entry.id}")
+        hidden: httpx.Response = await client.get(f"/api/v1/client/history/{other_entry.id}")
+        session_page: httpx.Response = await client.get("/api/v1/client/sessions")
 
     payload: dict[str, Any] = page.json()
     assert login.status_code == 200

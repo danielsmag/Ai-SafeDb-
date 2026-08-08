@@ -8,10 +8,12 @@ from app.exceptions.exceptions import (
     GatewayError,
     LlmUnavailableError,
     MissingEnvVarError,
+    PipelineExecutionError,
     PolicyViolationError,
     ProxyBuildError,
     ToolBlockedError,
     ToolGuardedError,
+    UnknownTaskTypeError,
 )
 
 __all__: list[str] = [
@@ -22,8 +24,10 @@ __all__: list[str] = [
     "GatewayError",
     "LlmUnavailableError",
     "MissingEnvVarError",
+    "PipelineExecutionError",
     "PolicyViolationError",
     "ProxyBuildError",
     "ToolBlockedError",
     "ToolGuardedError",
+    "UnknownTaskTypeError",
 ]

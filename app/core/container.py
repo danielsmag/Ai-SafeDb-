@@ -4,7 +4,7 @@ from dependency_injector import containers, providers
 
 from app.core.config import AppSettings
 from app.core.database import Database
-from app.domain.gateway_application import GatewayApplication
+from app.domain.application import GatewayApplication
 from app.llm import OpenAICompatibleLlmClient
 from app.policies import PolicyLoader
 from app.proxy_factory import ProxyFactory
@@ -12,6 +12,17 @@ from app.services.auth import AuthService
 from app.services.config_loader import ConfigLoader
 from app.services.guard import GuardService
 from app.services.history import PostgresHistoryStore
+from app.services.pipelines import HandlerRegistry, PipelineExecutor, PipelineLoader
+from app.services.pipelines.handlers import (
+    CustomHandler,
+    GuardHandler,
+    McpServerHandler,
+    OutputHandler,
+    PolicyHandler,
+    SourceHandler,
+    TransformHandler,
+    ValidationHandler,
+)
 from app.services.rewriter import PiiQueryRewriter
 from app.services.session import SessionService
 from app.services.workflows import WorkflowLoader
@@ -37,6 +48,30 @@ class ApplicationContainer(containers.DeclarativeContainer):
         workflows_dir=settings.provided.workflows_dir,
         sources_dir=settings.provided.sources_dir,
         outputs_dir=settings.provided.outputs_dir,
+    )
+    pipeline_loader: providers.Factory[PipelineLoader] = providers.Factory(
+        PipelineLoader,
+        pipelines_dir=settings.provided.pipelines_dir,
+    )
+    handler_registry: providers.Singleton[HandlerRegistry] = providers.Singleton(
+        HandlerRegistry,
+        handlers=providers.List(
+            providers.Singleton(SourceHandler),
+            providers.Singleton(PolicyHandler),
+            providers.Singleton(TransformHandler),
+            providers.Singleton(ValidationHandler),
+            providers.Singleton(GuardHandler),
+            providers.Singleton(McpServerHandler),
+            providers.Singleton(OutputHandler),
+            providers.Singleton(CustomHandler),
+        ),
+    )
+    pipeline_executor: providers.Factory[PipelineExecutor] = providers.Factory(
+        PipelineExecutor,
+        registry=handler_registry,
+        max_parallel_tasks=settings.provided.pipeline.max_parallel_tasks,
+        task_timeout_seconds=settings.provided.pipeline.task_timeout_seconds,
+        retry_count=settings.provided.pipeline.retry_count,
     )
     llm_client: providers.Singleton[OpenAICompatibleLlmClient] = providers.Singleton(
         OpenAICompatibleLlmClient,
@@ -97,4 +132,7 @@ class ApplicationContainer(containers.DeclarativeContainer):
         auth_store=auth_service,
         history_store=history_store,
         workflow_loader=workflow_loader,
+        pipeline_loader=pipeline_loader,
+        pipeline_executor=pipeline_executor,
+        guard_service=guard_service,
     )

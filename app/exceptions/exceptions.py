@@ -1,8 +1,12 @@
 """Exception hierarchy for the gateway."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastmcp.exceptions import ToolError
+
+if TYPE_CHECKING:
+    from app.services.pipelines.models import TaskType
 
 
 class GatewayError(Exception):
@@ -51,6 +55,22 @@ class ProxyBuildError(GatewayError):
     def __init__(self, server_name: str, message: str) -> None:
         self.server_name: str = server_name
         super().__init__(f"{server_name}: {message}")
+
+
+class PipelineExecutionError(GatewayError):
+    """A pipeline task failed and requested fail-fast behavior."""
+
+    def __init__(self, task_name: str, message: str) -> None:
+        self.task_name: str = task_name
+        super().__init__(f"pipeline task {task_name!r} failed: {message}")
+
+
+class UnknownTaskTypeError(GatewayError):
+    """No runtime handler is registered for a pipeline task type."""
+
+    def __init__(self, task_type: TaskType) -> None:
+        self.task_type: TaskType = task_type
+        super().__init__(f"no handler registered for task type {task_type!r}")
 
 
 class LlmUnavailableError(GatewayError):

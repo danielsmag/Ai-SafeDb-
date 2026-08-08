@@ -11,6 +11,7 @@ services:
     environment:
       GATEWAY_CONFIG_DIR: /app/mcp-servers
       GATEWAY_POLICIES_DIR: /app/policies
+      GATEWAY_PIPELINES_DIR: /app/pipelines
       GATEWAY_WORKFLOWS_DIR: /app/workflows
       GATEWAY_SOURCES_DIR: /app/sources
       GATEWAY_OUTPUTS_DIR: /app/outputs
@@ -30,6 +31,7 @@ services:
     volumes:
       - ./mcp-servers:/app/mcp-servers:ro
       - ./policies:/app/policies:ro
+      - ./pipelines:/app/pipelines:ro
       - ./workflows:/app/workflows:ro
       - ./sources:/app/sources:ro
       - ./outputs:/app/outputs:ro

@@ -9,7 +9,7 @@ import {
   UserRound,
 } from 'lucide-react'
 import { ApiError, login } from '../api'
-import { navigateTo } from '../routing'
+import { currentSurface, navigateTo } from '../routing'
 
 export function LoginPage(): ReactNode {
   const [username, setUsername] = useState('')
@@ -29,7 +29,7 @@ export function LoginPage(): ReactNode {
     setError(null)
     try {
       await login(normalizedUsername, password)
-      navigateTo('/history')
+      navigateTo(currentSurface() === 'manager' ? '/admin' : '/history')
     } catch (caught: unknown) {
       const message =
         caught instanceof ApiError && caught.status === 401

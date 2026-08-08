@@ -113,8 +113,8 @@ def gateway_app(
 
 async def test_health_and_server_listing(gateway_app: FastAPI) -> None:
     async with running(gateway_app) as app, asgi_client(app) as client:
-        health: httpx.Response = await client.get("/health")
-        servers: httpx.Response = await client.get("/servers")
+        health: httpx.Response = await client.get("/api/v1/health")
+        servers: httpx.Response = await client.get("/api/v1/servers")
 
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
@@ -163,7 +163,7 @@ async def test_invalid_api_key_is_rejected(gateway_app: FastAPI) -> None:
 
 async def test_empty_config_dir_serves_only_gateway_routes(config_dir: Path) -> None:
     async with running(build_app(config_dir)) as app, asgi_client(app) as client:
-        health: httpx.Response = await client.get("/health")
+        health: httpx.Response = await client.get("/api/v1/health")
         missing: httpx.Response = await client.get("/mcp/source")
 
     assert health.json()["servers"] == 0
@@ -210,30 +210,30 @@ async def test_session_data_key_rest_api(
 
     async with running(app) as running_app, asgi_client(running_app) as client:
         by_api_key: httpx.Response = await client.get(
-            "/sessions/data-key",
+            "/api/v1/sessions/data-key",
             headers={"Authorization": f"Bearer {DEV_API_KEY}"},
         )
         ok: httpx.Response = await client.get(
-            f"/sessions/{session.mcp_session_id}/data-key",
+            f"/api/v1/sessions/{session.mcp_session_id}/data-key",
             headers={"Authorization": f"Bearer {DEV_API_KEY}"},
         )
         missing_auth: httpx.Response = await client.get(
-            "/sessions/data-key"
+            "/api/v1/sessions/data-key"
         )
         bad_auth: httpx.Response = await client.get(
-            "/sessions/data-key",
+            "/api/v1/sessions/data-key",
             headers={"Authorization": "Bearer not-a-real-key"},
         )
         wrong_owner: httpx.Response = await client.get(
-            f"/sessions/{session.mcp_session_id}/data-key",
+            f"/api/v1/sessions/{session.mcp_session_id}/data-key",
             headers={"Authorization": f"Bearer {other_key}"},
         )
         no_session_for_other: httpx.Response = await client.get(
-            "/sessions/data-key",
+            "/api/v1/sessions/data-key",
             headers={"Authorization": f"Bearer {other_key}"},
         )
         unknown: httpx.Response = await client.get(
-            "/sessions/does-not-exist/data-key",
+            "/api/v1/sessions/does-not-exist/data-key",
             headers={"Authorization": f"Bearer {DEV_API_KEY}"},
         )
 

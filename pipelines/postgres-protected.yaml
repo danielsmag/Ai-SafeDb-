@@ -1,0 +1,44 @@
+name: postgres-protected
+enabled: true
+description: Resolve and validate the protected Postgres MCP configuration.
+
+tasks:
+  - name: load-source
+    type: source
+    config:
+      ref: postgres
+
+  - name: apply-readonly
+    type: policy
+    depends_on: [load-source]
+    config:
+      policy: pg-readonly
+
+  - name: collect-protection
+    type: transform
+    depends_on: [load-source, apply-readonly]
+    config:
+      operation: collect
+
+  - name: validate-security
+    type: validation
+    depends_on: [collect-protection]
+
+  - name: guard-check
+    type: guard
+    depends_on: [validate-security]
+    config:
+      inspect_results: true
+
+  - name: expose-mcp
+    type: mcp_server
+    depends_on: [guard-check]
+    config:
+      server: postgres
+
+  - name: publish
+    type: output
+    depends_on: [expose-mcp]
+    config:
+      transport: http
+      url: /mcp/postgres

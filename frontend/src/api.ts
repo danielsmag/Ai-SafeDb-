@@ -1,6 +1,12 @@
 export type Decision = 'allow' | 'block' | null
 export type CallStatus = 'ok' | 'blocked' | 'error'
 
+import { currentSurface } from './routing'
+
+const API_V1_PREFIX: string = '/api/v1'
+const CLIENT_API_PREFIX: string = `${API_V1_PREFIX}/client`
+const MANAGER_API_PREFIX: string = `${API_V1_PREFIX}/manager`
+
 export interface Identity {
   username: string
   is_admin: boolean
@@ -61,6 +67,11 @@ export class ApiError extends Error {
   }
 }
 
+
+function apiPrefixForSurface(): string {
+  return currentSurface() === 'manager' ? MANAGER_API_PREFIX : CLIENT_API_PREFIX
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -81,7 +92,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export function login(username: string, password: string): Promise<Identity> {
-  return request<Identity>('/api/login', {
+  return request<Identity>(`${apiPrefixForSurface()}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -89,15 +100,15 @@ export function login(username: string, password: string): Promise<Identity> {
 }
 
 export function logout(): Promise<void> {
-  return request<void>('/api/logout', { method: 'POST' })
+  return request<void>(`${apiPrefixForSurface()}/logout`, { method: 'POST' })
 }
 
 export function getIdentity(): Promise<Identity> {
-  return request<Identity>('/api/me')
+  return request<Identity>(`${apiPrefixForSurface()}/me`)
 }
 
 export function getSessions(): Promise<{ sessions: Session[] }> {
-  return request<{ sessions: Session[] }>('/api/sessions')
+  return request<{ sessions: Session[] }>(`${CLIENT_API_PREFIX}/sessions`)
 }
 
 export interface HistoryFilters {
@@ -114,7 +125,7 @@ export function getHistory(filters: HistoryFilters): Promise<HistoryPage> {
   })
   if (filters.server) query.set('server', filters.server)
   if (filters.sessionId) query.set('session_id', filters.sessionId)
-  return request<HistoryPage>(`/api/history?${query}`)
+  return request<HistoryPage>(`${CLIENT_API_PREFIX}/history?${query}`)
 }
 
 export interface AdminUser {
@@ -175,11 +186,11 @@ export interface AdminHistoryFilters {
 }
 
 export function adminListUsers(): Promise<{ users: AdminUser[] }> {
-  return request<{ users: AdminUser[] }>('/api/admin/users')
+  return request<{ users: AdminUser[] }>(`${MANAGER_API_PREFIX}/users`)
 }
 
 export function adminCreateUser(payload: CreateUserPayload): Promise<AdminUser> {
-  return request<AdminUser>('/api/admin/users', {
+  return request<AdminUser>(`${MANAGER_API_PREFIX}/users`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -190,7 +201,7 @@ export function adminUpdateUser(
   userId: string,
   payload: UpdateUserPayload,
 ): Promise<AdminUser> {
-  return request<AdminUser>(`/api/admin/users/${userId}`, {
+  return request<AdminUser>(`${MANAGER_API_PREFIX}/users/${userId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -198,11 +209,11 @@ export function adminUpdateUser(
 }
 
 export function adminListPolicies(): Promise<{ policies: PolicySummary[] }> {
-  return request<{ policies: PolicySummary[] }>('/api/admin/policies')
+  return request<{ policies: PolicySummary[] }>(`${MANAGER_API_PREFIX}/policies`)
 }
 
 export function adminListSessions(): Promise<{ sessions: Session[] }> {
-  return request<{ sessions: Session[] }>('/api/admin/sessions')
+  return request<{ sessions: Session[] }>(`${MANAGER_API_PREFIX}/sessions`)
 }
 
 export function adminGetHistory(filters: AdminHistoryFilters): Promise<HistoryPage> {
@@ -220,47 +231,102 @@ export function adminGetHistory(filters: AdminHistoryFilters): Promise<HistoryPa
   if (filters.until) query.set('until', filters.until)
   if (filters.sortBy) query.set('sort_by', filters.sortBy)
   if (filters.sortOrder) query.set('sort_order', filters.sortOrder)
-  return request<HistoryPage>(`/api/admin/history?${query}`)
+  return request<HistoryPage>(`${MANAGER_API_PREFIX}/history?${query}`)
 }
 
 export function adminGetHistoryFacets(): Promise<HistoryFacets> {
-  return request<HistoryFacets>('/api/admin/history/facets')
+  return request<HistoryFacets>(`${MANAGER_API_PREFIX}/history/facets`)
 }
 
-export type WorkflowNodeKind = 'source' | 'mcp' | 'policy' | 'output'
+export type PipelineTaskType =
+  | 'source'
+  | 'policy'
+  | 'transform'
+  | 'validation'
+  | 'guard'
+  | 'mcp_server'
+  | 'output'
+  | 'custom'
+export type PipelineStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type PipelineTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
 
-export interface WorkflowNode {
+export interface PipelineTaskResult {
+  name: string
+  type: PipelineTaskType
+  status: PipelineTaskStatus
+  output: unknown
+  error: string | null
+  metadata: Record<string, unknown>
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface PipelineRun {
+  run_id: string
+  pipeline_name: string
+  status: PipelineStatus
+  tasks: Record<string, PipelineTaskResult>
+  started_at: string
+  finished_at: string | null
+  error: string | null
+}
+
+export interface PipelineNode {
   id: string
-  kind: WorkflowNodeKind
+  kind: PipelineTaskType
   label: string
-  sublabel: string | null
-  missing: boolean
+  enabled: boolean
+  on_failure: 'fail' | 'skip' | 'warn'
   details: Record<string, string>
-  yaml: string | null
+  yaml: string
 }
 
-export interface WorkflowEdge {
+export interface PipelineEdge {
   from_id: string
   to_id: string
 }
 
-export interface WorkflowGraph {
-  nodes: WorkflowNode[]
-  edges: WorkflowEdge[]
+export interface PipelineGraph {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
 }
 
-export interface WorkflowSummary {
+export interface PipelineSummary {
   name: string
   enabled: boolean
   description: string | null
-  source: string
-  mcp_server: string
-  policies: string[]
-  output: string
-  valid: boolean
-  graph: WorkflowGraph
+  task_count: number
+  graph: PipelineGraph
+  latest_run: PipelineRun | null
 }
 
-export function adminListWorkflows(): Promise<{ workflows: WorkflowSummary[] }> {
-  return request<{ workflows: WorkflowSummary[] }>('/api/admin/workflows')
+export function adminListPipelines(): Promise<{ pipelines: PipelineSummary[] }> {
+  return request<{ pipelines: PipelineSummary[] }>(`${MANAGER_API_PREFIX}/pipelines`)
+}
+
+export function adminStartPipeline(
+  name: string,
+  inputs: Record<string, unknown> = {},
+): Promise<PipelineRun> {
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipelines/${encodeURIComponent(name)}/runs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs }),
+  })
+}
+
+export function adminGetPipelineRun(runId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipeline-runs/${runId}`)
+}
+
+export function adminCancelPipelineRun(runId: string): Promise<PipelineRun> {
+  return request<PipelineRun>(`${MANAGER_API_PREFIX}/pipeline-runs/${runId}/cancel`, {
+    method: 'POST',
+  })
 }

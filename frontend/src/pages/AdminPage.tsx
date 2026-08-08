@@ -15,12 +15,14 @@ import {
   Key,
   LogOut,
   Plus,
+  Play,
   RefreshCw,
   Search,
   Server,
   Settings,
   Shield,
   ShieldCheck,
+  Square,
   User,
   Users,
   Workflow,
@@ -36,7 +38,10 @@ import {
   adminListPolicies,
   adminListSessions,
   adminListUsers,
-  adminListWorkflows,
+  adminCancelPipelineRun,
+  adminGetPipelineRun,
+  adminListPipelines,
+  adminStartPipeline,
   adminUpdateUser,
   ApiError,
   getIdentity,
@@ -48,14 +53,15 @@ import {
   type Identity,
   type PolicySummary,
   type Session,
-  type WorkflowGraph,
-  type WorkflowNode,
-  type WorkflowNodeKind,
-  type WorkflowSummary,
+  type PipelineGraph,
+  type PipelineNode,
+  type PipelineRun,
+  type PipelineSummary,
+  type PipelineTaskType,
 } from '../api'
-import { navigateTo } from '../routing'
+import { navigateTo, navigateToClient } from '../routing'
 
-type TabId = 'users' | 'policies' | 'connections' | 'requests'
+type TabId = 'users' | 'policies' | 'pipelines' | 'requests'
 type SortColumn =
   | 'created_at'
   | 'server_name'
@@ -771,29 +777,29 @@ const DAG_COL_GAP: number = 96
 const DAG_ROW_GAP: number = 26
 const DAG_PAD: number = 28
 
-const DAG_KIND_ORDER: Record<WorkflowNodeKind, number> = {
-  source: 0,
-  mcp: 1,
-  policy: 2,
-  output: 3,
-}
-
-const DAG_KIND_LABEL: Record<WorkflowNodeKind, string> = {
-  source: 'Source Server',
-  mcp: 'MCP Server',
+const DAG_KIND_LABEL: Record<PipelineTaskType, string> = {
+  source: 'Source',
   policy: 'Policy',
-  output: 'MCP Target',
+  transform: 'Transform',
+  validation: 'Validation',
+  guard: 'Guard',
+  mcp_server: 'MCP Server',
+  output: 'Output',
+  custom: 'Custom',
 }
 
-function DagKindIcon({ kind }: { kind: WorkflowNodeKind }): ReactNode {
+function DagKindIcon({ kind }: { kind: PipelineTaskType }): ReactNode {
   if (kind === 'source') return <Database size={15} />
-  if (kind === 'mcp') return <Server size={15} />
+  if (kind === 'mcp_server') return <Server size={15} />
   if (kind === 'policy') return <Shield size={15} />
+  if (kind === 'guard' || kind === 'validation') return <ShieldCheck size={15} />
+  if (kind === 'transform') return <RefreshCw size={15} />
+  if (kind === 'custom') return <Wrench size={15} />
   return <Globe size={15} />
 }
 
 interface PositionedDagNode {
-  node: WorkflowNode
+  node: PipelineNode
   x: number
   y: number
 }
@@ -804,12 +810,36 @@ interface DagLayout {
   height: number
 }
 
-function layoutDag(graph: WorkflowGraph): DagLayout {
-  const buckets: WorkflowNode[][] = [[], [], [], []]
-  for (const node of graph.nodes) {
-    buckets[DAG_KIND_ORDER[node.kind]].push(node)
+function layoutDag(graph: PipelineGraph): DagLayout {
+  const dependencies: Map<string, string[]> = new Map(
+    graph.nodes.map((node) => [node.id, []]),
+  )
+  for (const edge of graph.edges) {
+    dependencies.get(edge.to_id)?.push(edge.from_id)
   }
-  const columns: WorkflowNode[][] = buckets.filter((column) => column.length > 0)
+  const levels: Map<string, number> = new Map()
+  const unresolved: Set<string> = new Set(graph.nodes.map((node) => node.id))
+  while (unresolved.size > 0) {
+    let progressed: boolean = false
+    for (const nodeId of [...unresolved]) {
+      const parents: string[] = dependencies.get(nodeId) ?? []
+      if (parents.every((parent) => levels.has(parent))) {
+        const level: number =
+          parents.length === 0
+            ? 0
+            : Math.max(...parents.map((parent) => levels.get(parent) ?? 0)) + 1
+        levels.set(nodeId, level)
+        unresolved.delete(nodeId)
+        progressed = true
+      }
+    }
+    if (!progressed) break
+  }
+  const maxLevel: number = Math.max(0, ...levels.values())
+  const columns: PipelineNode[][] = Array.from({ length: maxLevel + 1 }, () => [])
+  for (const node of graph.nodes) {
+    columns[levels.get(node.id) ?? 0].push(node)
+  }
   const maxRows: number = Math.max(1, ...columns.map((column) => column.length))
   const height: number =
     DAG_PAD * 2 + maxRows * DAG_NODE_H + (maxRows - 1) * DAG_ROW_GAP
@@ -834,7 +864,13 @@ function layoutDag(graph: WorkflowGraph): DagLayout {
   return { positioned, width, height }
 }
 
-function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
+function PipelineDag({
+  pipeline,
+  run,
+}: {
+  pipeline: PipelineSummary
+  run: PipelineRun | null
+}): ReactNode {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [showYaml, setShowYaml] = useState<boolean>(false)
 
@@ -843,36 +879,30 @@ function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
   }, [selectedNodeId])
 
   const layout: DagLayout = useMemo(
-    () => layoutDag(workflow.graph),
-    [workflow.graph],
+    () => layoutDag(pipeline.graph),
+    [pipeline.graph],
   )
   const nodeById = useMemo(
     () => new Map(layout.positioned.map((item) => [item.node.id, item])),
     [layout],
   )
-  const selectedNode: WorkflowNode | null =
+  const selectedNode: PipelineNode | null =
     layout.positioned.find((item) => item.node.id === selectedNodeId)?.node ?? null
 
   return (
     <div className="dag-card">
       <header className="dag-header">
         <div>
-          <p className="eyebrow">Workflow DAG</p>
+          <p className="eyebrow">Pipeline DAG</p>
           <h3>
             <Workflow size={17} />
-            {workflow.name}
+            {pipeline.name}
           </h3>
-          {workflow.description && <p>{workflow.description}</p>}
+          {pipeline.description && <p>{pipeline.description}</p>}
         </div>
-        {workflow.valid ? (
-          <span className="status-badge status-ok">
-            <span /> All dependencies resolved
-          </span>
-        ) : (
-          <span className="status-badge status-error">
-            <span /> Missing dependencies
-          </span>
-        )}
+        <span className={`status-badge status-${run?.status ?? 'pending'}`}>
+          <span /> {run?.status ?? 'not run'}
+        </span>
       </header>
 
       <div className="dag-scroll">
@@ -899,7 +929,7 @@ function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
               </marker>
             </defs>
-            {workflow.graph.edges.map((edge) => {
+            {pipeline.graph.edges.map((edge) => {
               const from: PositionedDagNode | undefined = nodeById.get(edge.from_id)
               const to: PositionedDagNode | undefined = nodeById.get(edge.to_id)
               if (!from || !to) return null
@@ -919,31 +949,35 @@ function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
             })}
           </svg>
 
-          {layout.positioned.map(({ node, x, y }) => (
-            <button
-              key={node.id}
-              type="button"
-              className={[
-                'dag-node',
-                `dag-node-${node.kind}`,
-                node.missing ? 'dag-node-missing' : '',
-                selectedNodeId === node.id ? 'dag-node-selected' : '',
-              ]
-                .filter(Boolean)
-                .join(' ')}
-              style={{ left: x, top: y, width: DAG_NODE_W, height: DAG_NODE_H }}
-              onClick={() =>
-                setSelectedNodeId(selectedNodeId === node.id ? null : node.id)
-              }
-            >
-              <span className="dag-node-kind">
-                <DagKindIcon kind={node.kind} />
-                {DAG_KIND_LABEL[node.kind]}
-              </span>
-              <strong>{node.label}</strong>
-              <small>{node.missing ? 'definition not found' : node.sublabel}</small>
-            </button>
-          ))}
+          {layout.positioned.map(({ node, x, y }) => {
+            const taskStatus = run?.tasks[node.id]?.status
+            return (
+              <button
+                key={node.id}
+                type="button"
+                className={[
+                  'dag-node',
+                  `dag-node-${node.kind}`,
+                  taskStatus ? `dag-node-status-${taskStatus}` : '',
+                  !node.enabled ? 'dag-node-disabled' : '',
+                  selectedNodeId === node.id ? 'dag-node-selected' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                style={{ left: x, top: y, width: DAG_NODE_W, height: DAG_NODE_H }}
+                onClick={() =>
+                  setSelectedNodeId(selectedNodeId === node.id ? null : node.id)
+                }
+              >
+                <span className="dag-node-kind">
+                  <DagKindIcon kind={node.kind} />
+                  {DAG_KIND_LABEL[node.kind]}
+                </span>
+                <strong>{node.label}</strong>
+                <small>{taskStatus ?? (node.enabled ? 'ready' : 'disabled')}</small>
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -955,39 +989,38 @@ function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
               {DAG_KIND_LABEL[selectedNode.kind]}
             </span>
             <strong>{selectedNode.label}</strong>
-            {selectedNode.missing && (
-              <span className="status-badge status-error">
-                <span /> Missing
+            {run?.tasks[selectedNode.id] && (
+              <span
+                className={`status-badge status-${run.tasks[selectedNode.id].status}`}
+              >
+                <span /> {run.tasks[selectedNode.id].status}
               </span>
             )}
             <div className="dag-detail-spacer" />
-            {selectedNode.yaml && (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setShowYaml((prev) => !prev)}
-              >
-                <FileText size={14} />
-                {showYaml ? 'Hide YAML' : 'View YAML'}
-              </button>
-            )}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setShowYaml((prev) => !prev)}
+            >
+              <FileText size={14} />
+              {showYaml ? 'Hide YAML' : 'View YAML'}
+            </button>
           </header>
-          {Object.keys(selectedNode.details).length > 0 ? (
-            <dl>
-              {Object.entries(selectedNode.details).map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key.replaceAll('_', ' ')}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="muted">
-              No definition file found for this dependency. Add the matching YAML
-              file to fix the workflow.
-            </p>
-          )}
-          {showYaml && selectedNode.yaml && (
+          <dl>
+            {Object.entries(selectedNode.details).map(([key, value]) => (
+              <div key={key}>
+                <dt>{key.replaceAll('_', ' ')}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+            {run?.tasks[selectedNode.id]?.error && (
+              <div>
+                <dt>error</dt>
+                <dd>{run.tasks[selectedNode.id].error}</dd>
+              </div>
+            )}
+          </dl>
+          {showYaml && (
             <pre className="yaml-viewer">
               <code>{selectedNode.yaml}</code>
             </pre>
@@ -998,25 +1031,27 @@ function WorkflowDag({ workflow }: { workflow: WorkflowSummary }): ReactNode {
   )
 }
 
-function ConnectionsTab(): ReactNode {
-  const [workflows, setWorkflows] = useState<WorkflowSummary[]>([])
+function PipelinesTab(): ReactNode {
+  const [pipelines, setPipelines] = useState<PipelineSummary[]>([])
   const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [run, setRun] = useState<PipelineRun | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
+  const [starting, setStarting] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
 
-  const loadWorkflows = useCallback(async (): Promise<void> => {
+  const loadPipelines = useCallback(async (): Promise<void> => {
     setLoading(true)
     setError(null)
     try {
-      const response = await adminListWorkflows()
-      setWorkflows(response.workflows)
+      const response = await adminListPipelines()
+      setPipelines(response.pipelines)
       setSelectedName(
         (current) =>
-          current ?? (response.workflows.length ? response.workflows[0].name : null),
+          current ?? (response.pipelines.length ? response.pipelines[0].name : null),
       )
     } catch (caught: unknown) {
       setError(
-        caught instanceof Error ? caught.message : 'Failed to load workflows',
+        caught instanceof Error ? caught.message : 'Failed to load pipelines',
       )
     } finally {
       setLoading(false)
@@ -1024,28 +1059,81 @@ function ConnectionsTab(): ReactNode {
   }, [])
 
   useEffect(() => {
-    void loadWorkflows()
-  }, [loadWorkflows])
+    void loadPipelines()
+  }, [loadPipelines])
 
-  const selected: WorkflowSummary | null =
-    workflows.find((workflow) => workflow.name === selectedName) ?? null
+  const selected: PipelineSummary | null =
+    pipelines.find((pipeline) => pipeline.name === selectedName) ?? null
+
+  useEffect(() => {
+    setRun(selected?.latest_run ?? null)
+  }, [selected])
+
+  useEffect(() => {
+    if (!run || (run.status !== 'pending' && run.status !== 'running')) return
+    const timer: number = window.setInterval(() => {
+      void adminGetPipelineRun(run.run_id)
+        .then(setRun)
+        .catch((caught: unknown) =>
+          setError(caught instanceof Error ? caught.message : 'Failed to poll run'),
+        )
+    }, 750)
+    return () => window.clearInterval(timer)
+  }, [run])
+
+  async function startPipeline(): Promise<void> {
+    if (!selected) return
+    setStarting(true)
+    setError(null)
+    try {
+      setRun(await adminStartPipeline(selected.name))
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Failed to start pipeline')
+    } finally {
+      setStarting(false)
+    }
+  }
+
+  async function cancelPipeline(): Promise<void> {
+    if (!run) return
+    try {
+      setRun(await adminCancelPipelineRun(run.run_id))
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Failed to cancel pipeline')
+    }
+  }
 
   return (
     <div className="admin-tab-content">
       <div className="tab-header">
         <h2>
-          <Workflow size={20} /> Connections
+          <Workflow size={20} /> Pipelines
         </h2>
-        <button className="secondary-button" onClick={() => void loadWorkflows()}>
-          <RefreshCw size={15} className={loading ? 'spin' : ''} />
-          Refresh
-        </button>
+        <div className="tab-actions">
+          {run && (run.status === 'pending' || run.status === 'running') ? (
+            <button className="secondary-button" onClick={() => void cancelPipeline()}>
+              <Square size={14} /> Stop
+            </button>
+          ) : (
+            <button
+              className="primary-button"
+              disabled={!selected || starting}
+              onClick={() => void startPipeline()}
+            >
+              <Play size={14} /> {starting ? 'Starting...' : 'Run pipeline'}
+            </button>
+          )}
+          <button className="secondary-button" onClick={() => void loadPipelines()}>
+            <RefreshCw size={15} className={loading ? 'spin' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="error-state">
           <p>{error}</p>
-          <button onClick={() => void loadWorkflows()}>Try again</button>
+          <button onClick={() => void loadPipelines()}>Try again</button>
         </div>
       )}
 
@@ -1054,46 +1142,43 @@ function ConnectionsTab(): ReactNode {
           <table>
             <thead>
               <tr>
-                <th>Workflow</th>
+                <th>Pipeline</th>
                 <th>Status</th>
-                <th>Source Server</th>
-                <th>MCP Server</th>
-                <th>Policies</th>
-                <th>MCP Target</th>
-                <th>Dependencies</th>
+                <th>Tasks</th>
+                <th>Latest Run</th>
               </tr>
             </thead>
             <tbody>
               {loading
                 ? Array.from({ length: 3 }).map((_, index) => (
                     <tr className="skeleton-row" key={index}>
-                      {Array.from({ length: 7 }).map((__, cell) => (
+                      {Array.from({ length: 4 }).map((__, cell) => (
                         <td key={cell}>
                           <span />
                         </td>
                       ))}
                     </tr>
                   ))
-                : workflows.map((workflow) => (
+                : pipelines.map((pipeline) => (
                     <tr
-                      key={workflow.name}
+                      key={pipeline.name}
                       className={
-                        selectedName === workflow.name ? 'row-selected' : ''
+                        selectedName === pipeline.name ? 'row-selected' : ''
                       }
                       onClick={() =>
                         setSelectedName((current) =>
-                          current === workflow.name ? null : workflow.name,
+                          current === pipeline.name ? null : pipeline.name,
                         )
                       }
                     >
                       <td>
-                        <strong>{workflow.name}</strong>
-                        {workflow.description && (
-                          <small>{workflow.description}</small>
+                        <strong>{pipeline.name}</strong>
+                        {pipeline.description && (
+                          <small>{pipeline.description}</small>
                         )}
                       </td>
                       <td>
-                        {workflow.enabled ? (
+                        {pipeline.enabled ? (
                           <span className="status-badge status-ok">
                             <span /> Enabled
                           </span>
@@ -1103,48 +1188,13 @@ function ConnectionsTab(): ReactNode {
                           </span>
                         )}
                       </td>
+                      <td className="mono">{pipeline.task_count}</td>
                       <td>
-                        <span className="dag-chip dag-chip-source">
-                          <Database size={12} />
-                          {workflow.source}
+                        <span
+                          className={`status-badge status-${pipeline.latest_run?.status ?? 'pending'}`}
+                        >
+                          <span /> {pipeline.latest_run?.status ?? 'not run'}
                         </span>
-                      </td>
-                      <td>
-                        <span className="dag-chip dag-chip-mcp">
-                          <Server size={12} />
-                          {workflow.mcp_server}
-                        </span>
-                      </td>
-                      <td>
-                        {workflow.policies.length ? (
-                          <span className="dag-chip-stack">
-                            {workflow.policies.map((policy) => (
-                              <span className="dag-chip dag-chip-policy" key={policy}>
-                                <Shield size={12} />
-                                {policy}
-                              </span>
-                            ))}
-                          </span>
-                        ) : (
-                          <span className="muted">None</span>
-                        )}
-                      </td>
-                      <td>
-                        <span className="dag-chip dag-chip-output">
-                          <Globe size={12} />
-                          {workflow.output}
-                        </span>
-                      </td>
-                      <td>
-                        {workflow.valid ? (
-                          <span className="status-badge status-ok">
-                            <span /> Resolved
-                          </span>
-                        ) : (
-                          <span className="status-badge status-error">
-                            <span /> Missing
-                          </span>
-                        )}
                       </td>
                     </tr>
                   ))}
@@ -1152,19 +1202,16 @@ function ConnectionsTab(): ReactNode {
           </table>
         </div>
 
-        {!loading && workflows.length === 0 && (
+        {!loading && pipelines.length === 0 && (
           <div className="empty-state">
             <Workflow size={26} />
-            <h3>No workflows configured</h3>
-            <p>
-              Add YAML files under workflows/, sources/, and outputs/ to connect a
-              source server, its MCP server, policies, and an MCP target endpoint.
-            </p>
+            <h3>No pipelines configured</h3>
+            <p>Add declarative DAG YAML files under pipelines/.</p>
           </div>
         )}
       </div>
 
-      {selected && <WorkflowDag workflow={selected} />}
+      {selected && <PipelineDag pipeline={selected} run={run} />}
     </div>
   )
 }
@@ -1739,11 +1786,11 @@ export function AdminPage(): ReactNode {
             Policies
           </button>
           <button
-            className={`tab-button ${activeTab === 'connections' ? 'active' : ''}`}
-            onClick={() => setActiveTab('connections')}
+            className={`tab-button ${activeTab === 'pipelines' ? 'active' : ''}`}
+            onClick={() => setActiveTab('pipelines')}
           >
             <Workflow size={16} />
-            Connections
+            Pipelines
           </button>
           <button
             className={`tab-button ${activeTab === 'requests' ? 'active' : ''}`}
@@ -1753,7 +1800,7 @@ export function AdminPage(): ReactNode {
             Requests
           </button>
           <div className="tab-spacer" />
-          <button className="tab-button" onClick={() => navigateTo('/history')}>
+          <button className="tab-button" onClick={() => navigateToClient('/history')}>
             <ArrowDown size={16} style={{ transform: 'rotate(90deg)' }} />
             User View
           </button>
@@ -1761,7 +1808,7 @@ export function AdminPage(): ReactNode {
 
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'policies' && <PoliciesTab />}
-        {activeTab === 'connections' && <ConnectionsTab />}
+        {activeTab === 'pipelines' && <PipelinesTab />}
         {activeTab === 'requests' && <RequestsTab />}
       </div>
     </main>

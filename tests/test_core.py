@@ -6,6 +6,11 @@ from fastapi import FastAPI
 from app.core.bootstrap import ApplicationBootstrap
 from app.core.config import AppSettings
 from app.core.container import ApplicationContainer
+from app.domain.gateway_application import GatewayApplication
+from app.proxy_factory import ProxyFactory
+from app.services.config_loader import ConfigLoader
+from app.services.pipelines import HandlerRegistry, PipelineExecutor, PipelineLoader
+from app.services.pipelines.handlers import OutputHandler
 
 
 def test_settings_are_loaded_and_normalized_from_environment(
@@ -28,6 +33,9 @@ def test_container_applies_expected_dependency_lifetimes(tmp_path: Path) -> None
 
     assert container.settings() is settings
     assert container.config_loader() is not container.config_loader()
+    assert container.pipeline_loader() is not container.pipeline_loader()
+    assert container.pipeline_executor() is not container.pipeline_executor()
+    assert container.handler_registry() is container.handler_registry()
     assert container.proxy_factory() is container.proxy_factory()
     assert container.database() is container.database()
     assert container.session_service() is container.session_service()
@@ -46,8 +54,43 @@ def test_bootstrap_exposes_container_on_application_state(tmp_path: Path) -> Non
         getattr(route, "path", None) for route in api.routes
     }
     assert route_paths >= {
-        "/health",
-        "/servers",
-        "/sessions/data-key",
-        "/sessions/{mcp_session_id}/data-key",
+        "/api/v1/health",
+        "/api/v1/servers",
+        "/api/v1/manager/pipelines",
+        "/api/v1/manager/pipelines/{pipeline_name}/runs",
+        "/api/v1/manager/pipeline-runs/{run_id}",
+        "/api/v1/manager/pipeline-runs/{run_id}/cancel",
+        "/api/v1/sessions/data-key",
+        "/api/v1/sessions/{mcp_session_id}/data-key",
     }
+
+
+def test_pipeline_routes_do_not_require_history_store(tmp_path: Path) -> None:
+    config_dir: Path = tmp_path / "mcp-servers"
+    pipelines_dir: Path = tmp_path / "pipelines"
+    config_dir.mkdir()
+    pipelines_dir.mkdir()
+    (pipelines_dir / "demo.yaml").write_text(
+        "name: demo\ntasks:\n  - name: publish\n    type: output\n",
+        encoding="utf-8",
+    )
+    settings: AppSettings = AppSettings(
+        config_dir=config_dir,
+        pipelines_dir=pipelines_dir,
+    )
+    registry: HandlerRegistry = HandlerRegistry([OutputHandler()])
+    gateway: GatewayApplication = GatewayApplication(
+        settings=settings,
+        loader=ConfigLoader(config_dir),
+        proxy_factory=ProxyFactory(),
+        pipeline_loader=PipelineLoader(pipelines_dir),
+        pipeline_executor=PipelineExecutor(registry),
+    )
+
+    api: FastAPI = gateway.build()
+    route_paths: set[str | None] = {
+        getattr(route, "path", None) for route in api.routes
+    }
+
+    assert "/api/v1/manager/pipelines" in route_paths
+    assert "/api/v1/manager/pipelines/{pipeline_name}/runs" in route_paths
